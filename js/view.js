@@ -70,9 +70,10 @@
       pause: { x: 16, y: this.top + 18, w: 70, h: 70 },
       speed: { x: 560, y: this.top + 22, w: 66, h: 56 },
       ying: { x: 6, y: cy - 4, w: 88, h: 94 },
-      camp: [0, 1, 2, 3, 4].map(function (i) { return { x: 100 + i * 92, y: cy, w: 86, h: 86 }; }),
+      camp: [0, 1, 2, 3, 4].map(function (i) { return { x: 98 + i * 86, y: cy, w: 80, h: 86 }; }),
       recruit: { x: 190, y: this.BTN_Y, w: 260, h: 100 },
-      bar: [{ x: 20, y: this.BTN_Y + 10, w: 78, h: 80 }, { x: 104, y: this.BTN_Y + 10, w: 78, h: 80 }],
+      bar: [{ x: 532, y: cy, w: 100, h: 86 }],
+      skills: [{ x: 18, y: this.BTN_Y + 4, w: 80, h: 92 }, { x: 104, y: this.BTN_Y + 4, w: 80, h: 92 }],
       cards: [{ x: 462, y: this.BTN_Y + 4, w: 80, h: 92 }, { x: 550, y: this.BTN_Y + 4, w: 80, h: 92 }],
       help: { x: 98, y: this.top + 26, w: 54, h: 54 },
       wave: { x: 236, y: this.top + 70, w: 168, h: 66 }
@@ -437,6 +438,14 @@
           else { A.play('skill'); this.banner('对手：' + cd.name, cd.desc, { max: 2, side: 1 }); }
           this.cardFx(e);
           break;
+        case 'order':
+          this.orderFx(e);
+          break;
+        case 'rock':
+          if (mine) { A.play('boom'); G.haptic(15); }
+          this.add({ type: 'boom', x: P.x, y: P.y, r: e.r * CELL, max: 0.45, color: '#8a7a6a' });
+          this.dust(P); this.dust({ x: P.x + 20, y: P.y - 10 });
+          break;
         case 'event':
           var ev = G.EVENT[e.id];
           A.play('wave');
@@ -569,6 +578,7 @@
     this.drawHUD();
     this.drawBottom();
     this.drawHints();
+    this.drawAim();
     this.drawBanners();
     this.drawDrag();
     if (this.flashRed > 0) {
@@ -601,6 +611,9 @@
 
   V.drawZones = function () {
     var x = this.ctx, b = this.b;
+    if (!b.zones.length) return;
+    x.save();
+    x.beginPath(); x.rect(0, this.MAP_Y, DW, 800); x.clip();
     for (var i = 0; i < b.zones.length; i++) {
       var z = b.zones[i], P = this.posOf(z.x, z.y), a = Math.min(1, z.t / 0.6) * Math.min(1, (z.max - z.t) / 0.3 + 0.3);
       if (z.kind === 'fire') {
@@ -613,6 +626,18 @@
         }
         x.fillStyle = 'rgba(220,80,20,' + 0.18 * a + ')';
         x.beginPath(); x.ellipse(P.x, P.y, z.r * CELL, z.r * CELL * 0.7, 0, 0, Math.PI * 2); x.fill();
+      } else if (z.kind === 'arrows') {
+        x.fillStyle = 'rgba(60,50,40,' + 0.12 * a + ')';
+        x.beginPath(); x.arc(P.x, P.y, z.r * CELL, 0, Math.PI * 2); x.fill();
+        x.strokeStyle = 'rgba(40,32,26,' + 0.85 * a + ')'; x.lineWidth = 2.5;
+        x.beginPath();
+        for (var ar = 0; ar < 16; ar++) {
+          var ang2 = ar * 2.39996, rad = z.r * CELL * Math.sqrt(((ar * 0.618) % 1));
+          var ph = ((this.time * 3 + ar * 0.37) % 1);
+          var axp = P.x + Math.cos(ang2) * rad, ayp = P.y + Math.sin(ang2) * rad - 60 * (1 - ph);
+          x.moveTo(axp + 6, ayp - 18); x.lineTo(axp, ayp);
+        }
+        x.stroke();
       } else if (z.kind === 'lanefire') {
         var L = b.lanes[z.side];
         for (var d = 0.3; d < L.len; d += 0.55) {
@@ -628,10 +653,31 @@
         }
       }
     }
+    x.restore();
   };
 
   V.drawMines = function () {
     var x = this.ctx, b = this.b;
+    // 拒马
+    for (var bi = 0; bi < b.barriers.length; bi++) {
+      var br = b.barriers[bi], BP = this.posOf(br.x, br.y);
+      x.globalAlpha = Math.min(1, br.t / 0.5);
+      x.strokeStyle = '#6a4a2a'; x.lineWidth = 7; x.lineCap = 'round';
+      x.beginPath();
+      for (var q = -1; q <= 1; q++) { x.moveTo(BP.x + q * 22 - 12, BP.y - 22); x.lineTo(BP.x + q * 22 + 12, BP.y + 22); x.moveTo(BP.x + q * 22 + 12, BP.y - 22); x.lineTo(BP.x + q * 22 - 12, BP.y + 22); }
+      x.stroke();
+      x.strokeStyle = '#8a6a3a'; x.lineWidth = 6;
+      x.beginPath(); x.moveTo(BP.x - 36, BP.y); x.lineTo(BP.x + 36, BP.y); x.stroke();
+      x.globalAlpha = 1;
+    }
+    // 落石预警
+    for (var ri = 0; ri < b.blasts.length; ri++) {
+      var bl = b.blasts[ri];
+      if (bl.kind !== 'rock') continue;
+      var RP = this.posOf(bl.x, bl.y), kk = 1 - bl.t / 0.55;
+      x.fillStyle = 'rgba(40,30,20,' + (0.15 + 0.25 * kk) + ')';
+      x.beginPath(); x.ellipse(RP.x, RP.y + 10, bl.r * CELL * (0.4 + 0.6 * kk), bl.r * CELL * 0.5 * (0.4 + 0.6 * kk), 0, 0, Math.PI * 2); x.fill();
+    }
     for (var i = 0; i < b.mines.length; i++) {
       var m = b.mines[i];
       if (m.side !== 0 && b.mode !== 'endless') { /* 对手的雷也画出来，但淡一些 */ }
@@ -784,6 +830,18 @@
       x.strokeStyle = 'rgba(200,120,26,0.55)'; x.setLineDash([5, 5]); x.lineWidth = 2;
       x.beginPath(); x.arc(c.x, c.y, 33, 0, Math.PI * 2); x.stroke(); x.setLineDash([]);
     } else if (u.kind === 'farmer') {
+      var fc = b.cellAt(u.x, u.y);
+      if (fc && fc.t === 'G') {
+        // 种在草地上：画一块田
+        x.fillStyle = '#9a7a52';
+        roundRect(x, c.x - 34, c.y - 30, 68, 62, 8); x.fill();
+        x.strokeStyle = '#7a5a36'; x.lineWidth = 3;
+        x.beginPath();
+        for (var fl = 0; fl < 4; fl++) { x.moveTo(c.x - 28, c.y - 20 + fl * 15); x.lineTo(c.x + 28, c.y - 20 + fl * 15); }
+        x.stroke();
+        x.fillStyle = '#5f9a3a';
+        for (var sp = 0; sp < 6; sp++) { x.beginPath(); x.ellipse(c.x - 22 + (sp % 3) * 22, c.y - 14 + Math.floor(sp / 3) * 30, 4, 7, 0.4, 0, Math.PI * 2); x.fill(); }
+      }
       this.drawGlyph('农', 54, '#7a4a1a', cx, cy, { stroke: '#fff', sw: 2, scale: pop });
       x.strokeStyle = '#c98a00'; x.lineWidth = 4;
       x.beginPath(); x.arc(c.x, c.y, 34, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (u.farmT / 10)); x.stroke();
@@ -1063,6 +1121,21 @@
           x.beginPath(); x.arc(p.x, p.y, p.r * G.easeOutCubic(k), 0, Math.PI * 2); x.fill();
           x.strokeStyle = '#2b2622'; x.lineWidth = 3; x.stroke(); x.globalAlpha = 1;
           break;
+        case 'falling':
+          var fy = p.y - 260 * (1 - k);
+          x.fillStyle = '#6a5a4a';
+          for (var fr = 0; fr < 4; fr++) { x.beginPath(); x.arc(p.x + (fr - 1.5) * 22, fy - (fr % 2) * 30, 14 - fr, 0, Math.PI * 2); x.fill(); }
+          break;
+        case 'bolt':
+          x.globalAlpha = 1 - k; x.strokeStyle = '#fff6b0'; x.lineWidth = 6; x.lineJoin = 'miter';
+          x.beginPath();
+          var bx = p.x + 30, byy = this.MAP_Y - 20;
+          x.moveTo(bx, byy);
+          for (var seg = 1; seg <= 7; seg++) { bx = p.x + (seg < 7 ? (((p.seed * 997 + seg * 37) % 60) - 30) : 0); byy = this.MAP_Y - 20 + (p.y - this.MAP_Y + 20) * seg / 7; x.lineTo(bx, byy); }
+          x.stroke();
+          x.strokeStyle = '#e0a100'; x.lineWidth = 2; x.stroke();
+          x.globalAlpha = 1;
+          break;
         case 'stars':
           for (var st = 0; st < 3; st++) { var aa = this.time * 6 + st * 2.1; drawStar(x, p.x + Math.cos(aa) * 14, p.y + Math.sin(aa) * 4, 5, '#e0a100'); }
           break;
@@ -1234,13 +1307,42 @@
       drawBun(x, B.x + B.w / 2 - 22, B.y + 70 + press, 11);
       this.num(String(cost), 23, side.buns >= cost ? '#fff' : '#ffb0a0', B.x + B.w / 2 + 14, B.y + 70 + press, '#5a1a10', 3);
     }
-    // 军需栏
+    // 军需栏（叠放）
+    var rb = this.R.bar[0], itb = side.bar[0];
+    x.fillStyle = itb ? '#f7f1e3' : 'rgba(247,241,227,0.45)'; x.strokeStyle = itb ? '#b3261e' : 'rgba(168,154,134,0.6)'; x.lineWidth = 2;
+    x.setLineDash(itb ? [] : [6, 5]);
+    roundRect(x, rb.x, rb.y, rb.w, rb.h, 8); x.fill(); x.stroke(); x.setLineDash([]);
+    if (itb) {
+      this.itemGlyph(itb, rb.x + rb.w / 2, rb.y + rb.h / 2 - 4, 46, this.drag && this.drag.active && this.drag.from.bar === 0 ? 0.25 : 1);
+      var same = side.bar.filter(function (z) { return z.key === itb.key; }).length;
+      if (side.bar.length > 1) {
+        x.fillStyle = '#2b2622'; x.beginPath(); x.arc(rb.x + rb.w - 12, rb.y + 12, 14, 0, Math.PI * 2); x.fill();
+        this.num('×' + side.bar.length, 15, '#fff', rb.x + rb.w - 12, rb.y + 12);
+      }
+      void same;
+    } else this.drawGlyph('军需', 22, 'rgba(120,100,80,0.55)', rb.x + rb.w / 2, rb.y + rb.h / 2);
+    // 军令（可反复使用）
     for (i = 0; i < 2; i++) {
-      var rb = this.R.bar[i], itb = side.bar[i];
-      if (!itb) continue;
-      x.fillStyle = '#f7f1e3'; x.strokeStyle = '#b3261e'; x.lineWidth = 2;
-      roundRect(x, rb.x, rb.y, rb.w, rb.h, 8); x.fill(); x.stroke();
-      this.itemGlyph(itb, rb.x + rb.w / 2, rb.y + rb.h / 2 - 4, 40, this.drag && this.drag.active && this.drag.from.bar === i ? 0.25 : 1);
+      var rs = this.R.skills[i], sk = side.skills[i];
+      if (!sk) continue;
+      var sd = G.SKILL[sk.id];
+      var scx = rs.x + rs.w / 2, scy = rs.y + 40, rr = 34;
+      var aiming = this.aim && this.aim.i === i;
+      x.save();
+      if (aiming) { x.shadowColor = '#ffcf3f'; x.shadowBlur = 20; }
+      x.fillStyle = '#2f4f8f';
+      x.beginPath(); x.arc(scx, scy, rr, 0, Math.PI * 2); x.fill();
+      x.restore();
+      x.strokeStyle = aiming ? '#ffcf3f' : '#e0a100'; x.lineWidth = aiming ? 5 : 3;
+      x.beginPath(); x.arc(scx, scy, rr, 0, Math.PI * 2); x.stroke();
+      this.drawGlyph(sd.ch, 34, '#fff4d6', scx, scy);
+      if (sk.cd > 0) {
+        var frac = Math.min(1, sk.cd / sd.cd);
+        x.fillStyle = 'rgba(20,15,10,0.62)';
+        x.beginPath(); x.moveTo(scx, scy); x.arc(scx, scy, rr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac); x.closePath(); x.fill();
+        this.num(String(Math.ceil(sk.cd)), 24, '#fff', scx, scy, '#000', 3);
+      }
+      this.drawGlyph(sd.name, 15, '#fff', scx, rs.y + rs.h + 2, { font: 'sans', bold: true, stroke: '#1d2a50', sw: 3 });
     }
     // 锦囊
     for (i = 0; i < 2; i++) {
@@ -1435,7 +1537,9 @@
     var side = b.sides[0], hint = null;
     if (b.mergePairs(side).length && !this.hintDone.merge) hint = '场上有能合成的一对，叠在一起！';
     else if (b.wave === 2) hint = '贼兵走到阿斗跟前，阿斗就会掉一颗心';
-    else if (b.wave === 3 && side.cards.some(function (c) { return !c.used; })) hint = '右下角是锦囊：点一下看说明，再点一下发动';
+    else if (b.wave === 3 && side.skills.length) hint = '左下角是军令：点一下，再点路上施放；冷却好了还能再放';
+    else if (side.camp.some(function (c) { return c && c.kind === 'farmer'; })) hint = '农夫可以直接种在草地上，不占营地';
+    else if (b.wave === 6 && side.cards.some(function (c) { return !c.used; })) hint = '右下角是锦囊：点一下看说明，再点一下发动';
     else if (b.wave === 4) hint = '相邻的字能连成词：刀挨着枪、弓挨着骑都有加成';
     else if (b.wave === 5) hint = '把没用的兵拖回「营」能换回馒头';
     if (side.units.some(function (u) { return u.lvl >= 2 && u.kind === 'soldier'; }) && b.wave >= 2) this.hintDone.merge = true;
@@ -1496,10 +1600,23 @@
     if (inR(p, R.recruit)) { this.pressBtn = 'recruit'; return; }
     if (inR(p, R.help)) { this.pressBtn = 'help'; return; }
     if (inR(p, R.wave)) { this.pressBtn = 'wave'; return; }
+    for (var si = 0; si < 2; si++) if (inR(p, R.skills[si]) && b.sides[0].skills[si]) { this.pressBtn = 'skill' + si; return; }
+    // 军令瞄准中：点地图施放
+    if (this.aim) {
+      var aimI = this.aim.i;
+      this.aim = null;
+      if (p.y >= this.MAP_Y && p.y <= this.MAP_Y + 800) {
+        if (!b.useSkill(b.sides[0], aimI, { x: p.x / CELL, y: (p.y - this.MAP_Y) / CELL })) {
+          G.Audio.play('error');
+          this.text('要点在我方路上', p.x, p.y - 20, '#b3261e', 24, { font: 'sans' });
+        }
+      }
+      return;
+    }
     for (var ci = 0; ci < 2; ci++) if (inR(p, R.cards[ci]) && b.sides[0].cards[ci]) { this.pressBtn = 'card' + ci; return; }
     var side = b.sides[0];
     for (var i = 0; i < 5; i++) if (inR(p, R.camp[i]) && side.camp[i]) { this.startDrag({ camp: i }, p); return; }
-    for (i = 0; i < 2; i++) if (inR(p, R.bar[i]) && side.bar[i]) { this.startDrag({ bar: i }, p); return; }
+    if (inR(p, R.bar[0]) && side.bar[0]) { this.startDrag({ bar: 0 }, p); return; }
     var cell = this.cellAtPoint(p.x, p.y);
     if (cell) {
       var u = b.unitAt(cell[0], cell[1]);
@@ -1517,6 +1634,7 @@
   };
 
   V.onMove = function (e) {
+    if (this.aim) this.hoverP = this.evPoint(e);
     var d = this.drag;
     if (!d || !d.from) return;
     var p = this.evPoint(e);
@@ -1542,6 +1660,7 @@
       else if (btn === 'help' && inR(p, R.help)) { G.Audio.play('click'); if (this.o.onHelp) { this.setPaused(true); this.o.onHelp(); } }
       else if (btn === 'wave' && inR(p, R.wave)) { G.Audio.play('tap'); this.showWaveTip(); }
       else if (btn.slice(0, 4) === 'card') { var ci = +btn.slice(4); if (inR(p, R.cards[ci])) this.tapCard(ci); }
+      else if (btn.slice(0, 5) === 'skill') { var sk2 = +btn.slice(5); if (inR(p, R.skills[sk2])) this.tapSkill(sk2); }
       return;
     }
     var d = this.drag;
@@ -1566,7 +1685,7 @@
     var msg = '放不下';
     if (c.side !== 0) msg = '那是对手的地盘';
     else if (c.t === 'R') msg = '路上不能站人';
-    else if (c.t === 'G') msg = '草地要先用铁铲挖开';
+    else if (c.t === 'G') msg = '草地要先用铁铲挖开（农夫可以直接种）';
     else if (c.unit) msg = '不能合成';
     var cc = this.cellCenter(d.cell[0], d.cell[1]);
     this.text(msg, cc.x, cc.y - 20, '#b3261e', 24, { max: 1, font: 'sans' });
@@ -1632,11 +1751,46 @@
     else if (k === 'Escape' || k === 'p' || k === 'P') { if (!this.paused) { this.setPaused(true); if (this.o.onPause) this.o.onPause(); } }
     else if (k === 'f' || k === 'F') { this.speed = this.speed === 1 ? 2 : 1; }
     else if (k === 'q' || k === 'Q') { this.tapCard(0, true); }
+    else if (k === 'z' || k === 'Z') { this.tapSkill(0); }
+    else if (k === 'x' || k === 'X') { this.tapSkill(1); }
     else if (k === 'e' || k === 'E') { this.tapCard(1, true); }
     else if (k >= '1' && k <= '5') {
       var i = +k - 1;
       if (this.b.sides[0].camp[i]) { this.sel = { from: { camp: i } }; this.showTipFor(this.sel.from); }
     }
+  };
+
+  V.tapSkill = function (i) {
+    var b = this.b, side = b.sides[0], k = side.skills[i];
+    if (!k) return;
+    var def = G.SKILL[k.id];
+    if (this.aim && this.aim.i === i) { this.aim = null; this.hideTip(); return; }
+    if (b.state !== 'run') { G.Audio.play('error'); this.text('开战后才能用', this.R.skills[i].x + 40, this.R.skills[i].y - 16, '#b3261e', 22, { font: 'sans' }); return; }
+    if (k.cd > 0) { G.Audio.play('error'); this.tip('军令 · ' + def.name + '（冷却中 ' + Math.ceil(k.cd) + ' 秒）', def.desc + '<br>冷却 ' + def.cd + ' 秒，可以反复使用。'); return; }
+    if (def.target === 'none') { b.useSkill(side, i, null); this.hideTip(); return; }
+    this.aim = { i: i };
+    this.hoverP = null;
+    G.Audio.play('tap');
+    this.hideTip();
+  };
+
+  V.drawAim = function () {
+    if (!this.aim) return;
+    var x = this.ctx, b = this.b, lane = b.lanes[0], def = G.SKILL[b.sides[0].skills[this.aim.i].id];
+    var a = 0.25 + 0.15 * Math.sin(this.time * 6);
+    x.fillStyle = 'rgba(255,207,63,' + a + ')';
+    for (var i = 0; i < lane.cells.length; i++) { var c = lane.cells[i]; x.fillRect(c[0] * CELL + 2, this.MAP_Y + c[1] * CELL + 2, CELL - 4, CELL - 4); }
+    if (this.hoverP) {
+      var t = b.laneTarget(b.sides[0], this.hoverP.x / CELL, (this.hoverP.y - this.MAP_Y) / CELL);
+      if (t) {
+        var P = this.posOf(t.x, t.y), r = ({ arrows: 1.35, rocks: 1.05, thunder: 1.8, jvma: 0.5 })[def.id] || 1;
+        x.strokeStyle = '#b3261e'; x.lineWidth = 3; x.setLineDash([8, 6]);
+        x.beginPath(); x.arc(P.x, P.y, r * CELL, 0, Math.PI * 2); x.stroke(); x.setLineDash([]);
+      }
+    }
+    x.fillStyle = 'rgba(30,45,90,0.88)';
+    roundRect(x, 70, this.MAP_Y + 410, 500, 56, 14); x.fill();
+    this.drawGlyph('点我方路上的位置，施放「' + def.name + '」', 24, '#ffe9a8', 320, this.MAP_Y + 438, { font: 'sans', bold: true });
   };
 
   V.tapCard = function (i, direct) {
@@ -1670,6 +1824,37 @@
       html += '<br>我方羁绊：' + Object.keys(cnt).map(function (k) { return k + (cnt[k] > 1 ? '×' + cnt[k] : ''); }).join('、');
     } else html += '<br>我方羁绊：暂无（相邻的字连成词、刘关张同场等都会触发）';
     this.tip('敌情', html);
+  };
+
+  V.orderFx = function (e) {
+    var b = this.b, mine = e.side === 0, A = G.Audio;
+    var P = e.x != null ? this.posOf(e.x, e.y) : null;
+    var def = G.SKILL[e.id];
+    if (mine) G.haptic(12);
+    switch (e.id) {
+      case 'arrows': if (mine) A.play('arrow'); break;
+      case 'rocks': if (mine) A.play('thrust'); this.add({ type: 'falling', x: P.x, y: P.y, max: 0.55, ch: '石' }); break;
+      case 'jvma': if (mine) A.play('place'); break;
+      case 'drum':
+        if (mine) A.play('wave');
+        var L = b.lanes[e.side], end = L.pts[L.pts.length - 1];
+        this.add({ type: 'ring', x: 320, y: this.MAP_Y + (e.side === 0 ? 600 : 200), r: 300, max: 0.6, color: 'rgba(179,38,30,0.5)', w: 12 });
+        void end;
+        break;
+      case 'thunder':
+        if (mine) A.play('boom');
+        this.add({ type: 'bolt', x: P.x, y: P.y, max: 0.35, seed: Math.random() });
+        this.add({ type: 'flash', side: e.side, max: 0.25, color: 'rgba(255,255,230,0.45)' });
+        break;
+      case 'cry':
+        if (mine) A.play('roar');
+        var L2 = b.lanes[e.side], end2 = L2.pts[L2.pts.length - 1], Pe = this.posOf(end2.x, end2.y);
+        this.add({ type: 'ring', x: Pe.x, y: Pe.y, r: 3 * CELL, max: 0.6, color: 'rgba(60,120,200,0.55)', w: 10 });
+        this.say(e.side, '哇——！', true);
+        this.adou[e.side].shake = 0.5;
+        break;
+    }
+    if (mine) this.text(def.name, P ? P.x : 320, (P ? P.y : this.MAP_Y + 600) - 50, '#2f4f8f', 30, { pop: true, max: 1 });
   };
 
   V.cardFx = function (e) {

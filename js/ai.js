@@ -23,7 +23,7 @@
   A.update = function (dt) {
     if (this.b.state === 'over') return;
     this.cardT = (this.cardT || 0) - dt;
-    if (this.cardT <= 0) { this.cardT = 1 + this.rng() * 0.8; this.thinkCards(); }
+    if (this.cardT <= 0) { this.cardT = 1 + this.rng() * 0.8; this.thinkCards(); this.thinkSkills(); }
     this.t -= dt;
     if (this.t > 0) return;
     this.t = DELAY[this.d] * (0.7 + this.rng() * 0.6);
@@ -76,6 +76,43 @@
       if (item.kind === 'soldier' && v.key === item.key && v2 && v2.key === item.key) g++;
     });
     return g;
+  };
+
+  // 军令：冷却好了就找人多的地方放
+  A.thinkSkills = function () {
+    var b = this.b, side = this.side;
+    if (b.state !== 'run' || !side.skills || !side.skills.length) return;
+    if (this.rng.chance([0.6, 0.35, 0.15, 0][this.d])) return; // 低难度反应慢
+    var lane = b.lanes[side.idx];
+    var en = side.enemies.filter(function (e) { return !e.dead && e.invisT <= 0; });
+    if (!en.length) return;
+    // 找最密集、最靠前的一团
+    var best = null, bestScore = 0;
+    for (var i = 0; i < en.length; i++) {
+      var e = en[i], n = 0;
+      for (var j = 0; j < en.length; j++) if (Math.abs(en[j].dist - e.dist) < 1.3) n++;
+      var sc = n + (e.dist / lane.len) * 2 + (e.boss ? 3 : 0);
+      if (sc > bestScore) { bestScore = sc; best = e; }
+    }
+    var nearEnd = en.some(function (e) { return lane.len - e.dist < 3; });
+    var boss = en.filter(function (e) { return e.boss; })[0];
+    for (var k = 0; k < side.skills.length; k++) {
+      var sk = side.skills[k];
+      if (!b.canUseSkill(side, k)) continue;
+      var at = null, go = false;
+      switch (sk.id) {
+        case 'arrows': case 'rocks': go = bestScore >= 4 || nearEnd; at = best; break;
+        case 'thunder': go = !!boss || bestScore >= 5 || nearEnd; at = boss || best; break;
+        case 'jvma':
+          var lead = en.reduce(function (a, e) { return e.dist > a.dist ? e : a; }, en[0]);
+          go = lane.len - lead.dist < 5 && en.length >= 3;
+          if (go) { var p = lane.pos(Math.min(lane.len - 0.6, lead.dist + 0.8)); at = { x: p.x, y: p.y }; }
+          break;
+        case 'drum': go = en.length >= 6 || !!boss; break;
+        case 'cry': go = en.some(function (e) { return lane.len - e.dist < 2; }); break;
+      }
+      if (go && b.useSkill(side, k, at ? { x: at.x, y: at.y } : null)) return;
+    }
   };
 
   // 什么时候用锦囊
@@ -141,6 +178,14 @@
         if (ck) { if (!tgt || un.lvl > tgt.lvl || ck === 'form') tgt = un; }
       }
       if (tgt) { if (this.act({ camp: i }, { cell: [tgt.x, tgt.y] })) return true; }
+      // 农夫优先种在草地上，不占营地
+      if (it.kind === 'farmer' && this.wantPlace(it)) {
+        var grass = b.grassCells(side, true);
+        if (grass.length) {
+          var gc = this.bestCell(it, grass);
+          if (gc && this.act({ camp: i }, { cell: [gc.x, gc.y] })) return true;
+        }
+      }
       if (empties.length) {
         if (!this.wantPlace(it)) continue;
         var sloppy = [0.35, 0.2, 0.06, 0][this.d];
@@ -150,6 +195,15 @@
         // 满员但营地里有能配对的：腾出最弱的一格当“工作台”
         var weakest = this.weakestLoner();
         if (weakest) { this.act({ cell: [weakest.x, weakest.y] }, { dismiss: true }); return true; }
+      }
+    }
+
+    // 2.5 军需栏里的铲子、晋升令
+    for (var bi = 0; bi < side.bar.length; bi++) {
+      var bit = side.bar[bi];
+      if (bit && bit.kind === 'prop') {
+        var tc = this.propTarget(bit);
+        if (tc && this.act({ bar: bi }, { cell: [tc.x, tc.y] })) return true;
       }
     }
 
@@ -207,13 +261,14 @@
     if (it.kind !== 'farmer') return true;
     var farmers = side.units.filter(function (x) { return x.kind === 'farmer'; }).length;
     var fighters = side.units.length - farmers;
-    return this.b.wave <= 14 && farmers < 2 && fighters >= 4;
+    if (this.b.wave > 14 || farmers >= 3) return false;
+    return this.b.grassCells(side, true).length > 0 || fighters >= 4;
   };
 
   A.usable = function (it) {
     var b = this.b, side = this.side;
     if (it.kind === 'prop') return this.propTarget(it) != null;
-    if (b.emptyCells(side).length && this.wantPlace(it)) return true;
+    if ((b.emptyCells(side).length || (it.kind === 'farmer' && b.grassCells(side, true).length)) && this.wantPlace(it)) return true;
     for (var u = 0; u < side.units.length; u++) if (b.combineKind(it, side.units[u])) return true;
     return false;
   };
@@ -224,7 +279,8 @@
     for (var y = 0; y < 10; y++) for (var x = 0; x < 8; x++) cells.push(b.grid[y][x]);
     switch (it.key) {
       case 'shovel':
-        var gs = cells.filter(function (c) { return c.t === 'G' && c.side === side.idx; });
+        var gs = cells.filter(function (c) { return c.t === 'G' && c.side === side.idx && !c.unit; });
+        if (!gs.length) gs = cells.filter(function (c) { return c.t === 'G' && c.side === side.idx; });
         if (!gs.length) return null;
         gs.sort(function (p, q) { return self.coverage(q.x, q.y, 2) - self.coverage(p.x, p.y, 2); });
         return gs[0];
@@ -274,6 +330,7 @@
       weapons[gid] = { id: w.id, star: 1 + Math.min(4, Math.floor(rankIdx / 12)) };
     });
     var cards = G.CARDS.filter(function (c) { return c.unlock.rank != null ? c.unlock.rank <= rankIdx : rankIdx >= 20; }).map(function (c) { return c.id; });
-    return { deck: deck, weapons: weapons, cards: rng.shuffle(cards).slice(0, G.CARD_SLOTS) };
+    var skills = G.SKILLS.filter(function (k) { return k.unlock.rank != null ? k.unlock.rank <= rankIdx : rankIdx >= 20; }).map(function (k) { return k.id; });
+    return { deck: deck, weapons: weapons, cards: rng.shuffle(cards).slice(0, G.CARD_SLOTS), skills: rng.shuffle(skills).slice(0, G.SKILL_SLOTS) };
   };
 })(typeof window !== 'undefined' ? window : globalThis);

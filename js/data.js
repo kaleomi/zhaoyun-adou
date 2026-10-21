@@ -5,7 +5,7 @@
   'use strict';
   var G = root.G = root.G || {};
 
-  G.VERSION = '1.1.0';
+  G.VERSION = '1.2.0';
 
   // ───────────────────────── 段位 ─────────────────────────
   // [名称, 胜利铜钱, 敌兵加血%, 对手兵器品质权重[5], 对手难度权重[4], 地图, 升段所需星]
@@ -117,7 +117,7 @@
     qiang: { ch: '枪', name: '枪兵', atk: 'thrust', type: 1, dmg: 13, cd: 1.1,  range: 2.05, w: 22, desc: '长枪突刺，可刺穿目标身后的敌人，无视甲胄。' },
     gong:  { ch: '弓', name: '弓兵', atk: 'arrow',  type: 0, dmg: 8,  cd: 0.8,  range: 3.0,  w: 22, desc: '射程最远，出手最快。' },
     qi:    { ch: '骑', name: '骑兵', atk: 'charge', type: -1, dmg: 11, cd: 0.85, range: 1.65, w: 20, desc: '每第三击发起冲锋，造成 2.5 倍伤害并把敌人撞退。' },
-    nong:  { ch: '农', name: '农夫', atk: 'none', farmer: true, w: 6, desc: '不会打仗，但每 10 秒能蒸出一笼馒头。等级越高产量越大。' }
+    nong:  { ch: '农', name: '农夫', atk: 'none', farmer: true, w: 7, desc: '不会打仗，但每 10 秒能蒸出一笼馒头，等级越高产量越大。可以直接种在我方草地上，不占营地。' }
   };
   G.SOLDIER_KEYS = ['dao', 'qiang', 'gong', 'qi', 'nong'];
   G.MAX_LVL = 7;
@@ -260,7 +260,7 @@
 
   // ───────────────────────── 战场道具（征兵时可能刷出） ─────────────────────────
   G.PROPS = {
-    shovel:  { ch: '铲', name: '铁铲', target: 'grass', w: 40, desc: '拖到我方草地上，挖出一块新营地。' },
+    shovel:  { ch: '铲', name: '铁铲', target: 'grass', w: 60, desc: '拖到我方草地上，挖出一块新营地。没用完的铲子再征兵时会自动收进军需栏。' },
     promote: { ch: '令', name: '晋升令', target: 'unit', w: 18, desc: '拖到一个兵或武将身上，直接升一级。' },
     ink:     { ch: '砚', name: '砚台', target: 'soldier', w: 16, desc: '把兵泡进墨里，变成另一种兵，等级不变。' },
     mine:    { ch: '雷', name: '地雷', target: 'road', w: 14, desc: '埋在我方路上，炸翻第一个踩上去的敌人和周围一圈。' },
@@ -344,50 +344,63 @@
   G.CARD = {};
   G.CARDS.forEach(function (c) { G.CARD[c.id] = c; });
 
+  // ───────────────────────── 军令（可反复使用，有冷却） ─────────────────────────
+  G.SKILL_SLOTS = 2;
+  G.SKILLS = [
+    { id: 'arrows', name: '箭雨', ch: '箭', cd: 18, target: 'lane', unlock: { rank: 0 }, desc: '点我方路上的一处，万箭齐发 2.5 秒，射伤范围内的所有敌人。' },
+    { id: 'rocks', name: '落石', ch: '石', cd: 15, target: 'lane', unlock: { rank: 0 }, desc: '点我方路上的一处，滚石砸下，造成伤害并砸晕 1.5 秒。' },
+    { id: 'jvma', name: '拒马', ch: '拒', cd: 22, target: 'lane', unlock: { rank: 3 }, desc: '在我方路上摆一道拒马，挡住敌人 5 秒（Boss 只会被拖慢）。' },
+    { id: 'drum', name: '擂鼓', ch: '鼓', cd: 26, target: 'none', unlock: { rank: 8 }, desc: '擂响战鼓，全军攻速 +35%，持续 6 秒。' },
+    { id: 'thunder', name: '天雷', ch: '雷', cd: 24, target: 'lane', unlock: { rank: 14 }, desc: '点我方路上的一处，天雷劈中附近血最多的敌人，对 Boss 也很疼。' },
+    { id: 'cry', name: '阿斗大哭', ch: '哭', cd: 30, target: 'none', unlock: { camp: 'c5' }, desc: '阿斗放声大哭，把冲到跟前 3 格内的敌人吓退一格半，并减速 3 秒。' }
+  ];
+  G.SKILL = {};
+  G.SKILLS.forEach(function (k) { G.SKILL[k.id] = k; });
+
   // ───────────────────────── 长坂坡战役 ─────────────────────────
   // 单人闯关：守住 waves 波即过关。rules 覆盖默认设置。
   G.CAMPAIGN = [
-    { id: 'c1', name: '桃园结义', map: 0, waves: 6, hp: 1.1,
+    { id: 'c1', name: '桃园结义', map: 0, waves: 6, hp: 2.0,
       story: '涿郡桃园，刘关张焚香结拜。黄巾贼已到城外，兄弟三人第一次并肩御敌。',
       tip: '三兄弟同时在场会触发「桃园结义」，三人伤害大增。',
       rules: { deck: ['liubei', 'guanyu', 'zhangfei'], buns: 30, weather: 'clear' },
       reward: { gold: 200, frags: 2 } },
-    { id: 'c2', name: '黄巾之乱', map: 0, waves: 8, hp: 1.0,
+    { id: 'c2', name: '黄巾之乱', map: 0, waves: 8, hp: 2.0,
       story: '张角自称天公将军，三十六方同时起事。巨鹿城下，黄巾贼漫山遍野。',
       tip: '黄巾跑得快、数量多，多放刀兵波及成群的敌人。',
       rules: { mix: { jin: 8, zei: 2 }, bosses: { 8: 'zhangjiao' }, weather: 'clear' },
       reward: { gold: 260, frags: 2, card: 'kurou' } },
-    { id: 'c3', name: '温酒斩华雄', map: 2, waves: 5, hp: 2.2,
+    { id: 'c3', name: '温酒斩华雄', map: 2, waves: 5, hp: 3.8,
       story: '华雄连斩联军数将，关羽请战：「酒且斟下，某去便来。」',
       tip: '只能召唤关羽。华雄会在第三波和第五波出现，阿斗只有两颗心。',
       rules: { deck: ['guanyu'], hearts: 2, bosses: { 3: 'huaxiong', 5: 'huaxiong' } },
       reward: { gold: 300, frags: 3 } },
-    { id: 'c4', name: '三英战吕布', map: 2, waves: 10, hp: 1.4,
+    { id: 'c4', name: '三英战吕布', map: 2, waves: 10, hp: 2.2,
       story: '虎牢关前，吕布方天画戟所向无敌。刘关张三人联手，与他大战五十回合。',
       tip: '吕布无视控制、还会冲锋。凑齐桃园结义，集中火力。',
       rules: { deck: ['liubei', 'guanyu', 'zhangfei'], bosses: { 5: 'lvbu', 10: 'lvbu' }, bossHp: 1.4 },
       reward: { gold: 360, frags: 3, souls: { lvbu: 3 } } },
-    { id: 'c5', name: '单骑救主', map: 4, waves: 10, hp: 1.3,
+    { id: 'c5', name: '单骑救主', map: 4, waves: 10, hp: 2.6,
       story: '长坂坡上曹军百万，赵子龙怀抱阿斗，七进七出，杀出重围。',
       tip: '只有赵云出战，阿斗只剩一口气。七进七出的冷却缩短了。',
       rules: { deck: ['zhaoyun'], hearts: 1, zyBoost: true, weather: 'clear' },
       reward: { gold: 420, frags: 3, card: 'diaohu' } },
-    { id: 'c6', name: '当阳桥', map: 4, waves: 8, hp: 3.5,
+    { id: 'c6', name: '当阳桥', map: 4, waves: 8, hp: 6.5,
       story: '张飞据水断桥，横矛立马：「燕人张翼德在此，谁敢来决一死战！」',
       tip: '只能召唤张飞。贼兵多出六成，但走得慢。',
       rules: { deck: ['zhangfei'], countMult: 1.6, enemySpd: 0.85 },
       reward: { gold: 420, frags: 3 } },
-    { id: 'c7', name: '草船借箭', map: 3, waves: 8, hp: 5,
+    { id: 'c7', name: '草船借箭', map: 3, waves: 8, hp: 9,
       story: '江上大雾，孔明扎草人于船上，擂鼓呐喊，一夜借得十万支箭。',
       tip: '大雾天，只能招弓兵和农夫。孔明的连弩是主力。',
       rules: { deck: ['kongming'], soldiers: ['gong', 'nong'], weather: 'fog' },
       reward: { gold: 480, frags: 4, card: 'lianhuan' } },
-    { id: 'c8', name: '火烧赤壁', map: 3, waves: 12, hp: 2.8,
+    { id: 'c8', name: '火烧赤壁', map: 3, waves: 12, hp: 4.2,
       story: '曹军铁索连舟，东风一起，黄盖火船冲入，赤壁一片火海。',
       tip: '东风天里火焰更持久。周瑜和孔明同在会触发「既生瑜」。',
       rules: { deck: ['zhouyu', 'kongming', 'huangzhong'], weather: 'wind', bosses: { 6: 'caoren', 12: 'caoren' } },
       reward: { gold: 560, frags: 4, card: 'andu' } },
-    { id: 'c9', name: '七进七出', map: 4, waves: 15, hp: 1.6,
+    { id: 'c9', name: '七进七出', map: 4, waves: 15, hp: 2.4,
       story: '最后一战。带上你最强的武将与兵器，杀穿曹营，护送阿斗回到主公身边。',
       tip: '用你自己的出战武将与兵器。每五波一个 Boss，越往后越强。',
       rules: { bosses: { 5: 'huaxiong', 10: 'dongzhuo', 15: 'lvbu' }, bossHp: 1.3 },
@@ -414,7 +427,8 @@
     });
     var cards = rng.shuffle(G.CARDS.map(function (c) { return c.id; }).filter(function (id) { return id !== 'jiedao'; })).slice(0, 2);
     var weather = G.WEATHERS[1 + rng.int(G.WEATHERS.length - 1)].id;
-    return { day: day, seed: seed, map: rng.int(5), deck: gens, weapons: weapons, cards: cards, weather: weather, rankIdx: 15 };
+    var skills = rng.shuffle(G.SKILLS.map(function (k) { return k.id; })).slice(0, 2);
+    return { day: day, seed: seed, map: rng.int(5), deck: gens, weapons: weapons, cards: cards, skills: skills, weather: weather, rankIdx: 15 };
   };
 
   // ───────────────────────── 阿斗语录 ─────────────────────────

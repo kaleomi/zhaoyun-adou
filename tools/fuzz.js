@@ -12,8 +12,8 @@ for (const gid of gens) {
     const weapons = { [gid]: { id: w.id, star: 3 } };
     const seed = games * 13 + 5;
     const b = new G.Battle({ seed, mapId: games % 4, rankIdx: 40, introT: 0.2, dmgNumbers: false,
-      sides: [{ isAI: true, difficulty: 3, deck, weapons, supplies: { heart: 1, shovel: 1, promote: 1, buns: 1 } },
-              { isAI: true, difficulty: 2, deck: ['zhaoyun', 'guanyu', 'lvbu', 'diaochan'], weapons: {} }] });
+      sides: [{ isAI: true, difficulty: 3, deck, weapons, supplies: { heart: 1, shovel: 1, promote: 1, buns: 1 }, cards: [G.CARDS[games % 8].id, G.CARDS[(games + 3) % 8].id], skills: [G.SKILLS[games % 6].id, G.SKILLS[(games + 2) % 6].id] },
+              { isAI: true, difficulty: 2, deck: ['zhaoyun', 'guanyu', 'lvbu', 'diaochan'], weapons: {}, cards: ['jiedao', 'lianhuan'], skills: ['thunder', 'jvma'] }], weather: G.WEATHERS[games % 6].id });
     const ais = [new G.AI(b, 0, 3, seed), new G.AI(b, 1, 2, seed + 1)];
     let steps = 0, maxGen = 0;
     try {

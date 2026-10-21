@@ -158,7 +158,7 @@
       var nav = h('div', { class: 'nav' },
         navBtn('将', '武将', function () { self.showGenerals(); }, P.data.unlockedGens.length > 1 && !P.data.seenGens),
         navBtn('兵', '兵器', function () { self.showWeapons(); }, G.WEAPONS.some(function (w) { return P.canUnlock(w.id) || P.canUpgrade(w.id); })),
-        navBtn('囊', '锦囊', function () { self.showCards(); }, G.CARDS.some(function (c) { return P.cardUnlocked(c.id) && !(d.seenCards || {})[c.id]; })),
+        navBtn('令', '锦囊军令', function () { self.showCards(); }, G.CARDS.some(function (c) { return P.cardUnlocked(c.id) && !(d.seenCards || {})[c.id]; }) || G.SKILLS.some(function (k) { return P.skillUnlocked(k.id) && !(d.seenSkills || {})[k.id]; })),
         navBtn('军', '军需', function () { self.showShop(); }),
         navBtn('段', '段位', function () { self.showRanks(); })
       );
@@ -234,7 +234,7 @@
         if (self.screen !== 'match') return;
         self.startBattle({
           mode: 'pvp', mapId: rank.map, rankIdx: rankIdx, tutorial: tutorial, weather: weather,
-          ai: { difficulty: diff, deck: aiLoad.deck, weapons: aiLoad.weapons, cards: aiLoad.cards, name: oppName },
+          ai: { difficulty: diff, deck: aiLoad.deck, weapons: aiLoad.weapons, cards: aiLoad.cards, skills: tutorial ? ['arrows'] : aiLoad.skills, name: oppName },
           ranked: !tutorial
         });
       };
@@ -266,7 +266,7 @@
 
     startDaily: function () {
       var cfg = G.dailyConfig(G.cnDay());
-      this.startBattle({ mode: 'daily', mapId: cfg.map, rankIdx: cfg.rankIdx, weather: cfg.weather, deck: cfg.deck, weapons: cfg.weapons, cards: cfg.cards,
+      this.startBattle({ mode: 'daily', mapId: cfg.map, rankIdx: cfg.rankIdx, weather: cfg.weather, deck: cfg.deck, weapons: cfg.weapons, cards: cfg.cards, skills: cfg.skills,
         seed: cfg.seed, daily: cfg, noSupplies: true, soloTitle: '每日挑战', soloSub: cfg.day.slice(5).replace('-', '月') + '日' });
     },
 
@@ -281,8 +281,8 @@
         weather: o.weather || 'clear', waves: o.waves, hpMult: o.hpMult, rules: o.rules, events: o.events,
         dmgNumbers: d.settings.dmg,
         sides: [
-          { name: d.name || '我', deck: o.deck || load.deck, weapons: o.weapons || load.weapons, supplies: sup, cards: o.cards || P.activeCards() },
-          o.ai ? { name: o.ai.name, isAI: true, difficulty: o.ai.difficulty, deck: o.ai.deck, weapons: o.ai.weapons, cards: o.ai.cards, dmgMult: dm[o.ai.difficulty] * (o.tutorial ? 0.8 : 1) } : null
+          { name: d.name || '我', deck: o.deck || load.deck, weapons: o.weapons || load.weapons, supplies: sup, cards: o.cards || P.activeCards(), skills: o.skills || P.activeSkills() },
+          o.ai ? { name: o.ai.name, isAI: true, difficulty: o.ai.difficulty, deck: o.ai.deck, weapons: o.ai.weapons, cards: o.ai.cards, skills: o.ai.skills, dmgMult: dm[o.ai.difficulty] * (o.tutorial ? 0.8 : 1) } : null
         ]
       };
       var b = new G.Battle(cfg);
@@ -337,6 +337,7 @@
           lh += '<h3>对手 · ' + esc(o.ai ? o.ai.name : '') + '</h3>';
           lh += '<div class="sp-row">心 ' + '♥'.repeat(Math.max(0, s1.hearts)) + '<span class="sp-dim">' + '♥'.repeat(Math.max(0, s1.maxHearts - s1.hearts)) + '</span> · 击杀 ' + s1.kills + ' · 馒头 ' + Math.floor(s1.buns) + '</div>';
           lh += '<h4>阵容</h4><div class="sp-units">' + unitsHtml(s1.units) + '</div>';
+          lh += '<h4>军令</h4><div>' + (s1.skills.length ? s1.skills.map(function (k) { return '<span class="sp-card skill' + (k.cd > 0 ? ' used' : '') + '">' + G.SKILL[k.id].name + (k.cd > 0 ? ' ' + Math.ceil(k.cd) + '秒' : '') + '</span>'; }).join('') : '—') + '</div>';
           lh += '<h4>锦囊</h4><div>' + (s1.cards.length ? s1.cards.map(function (c) { return '<span class="sp-card' + (c.used ? ' used' : '') + '">' + G.CARD[c.id].name + '</span>'; }).join('') : '—') + '</div>';
           lh += '<h4>羁绊</h4><div>' + bondsHtml(s1.bonds) + '</div>';
         } else {
@@ -506,6 +507,8 @@
       var self = this, d = P.data;
       d.seenCards = d.seenCards || {};
       G.CARDS.forEach(function (c) { if (P.cardUnlocked(c.id)) d.seenCards[c.id] = 1; });
+      d.seenSkills = d.seenSkills || {};
+      G.SKILLS.forEach(function (k) { if (P.skillUnlocked(k.id)) d.seenSkills[k.id] = 1; });
       P.save();
       var list = h('div', { class: 'card-list' }, G.CARDS.map(function (c) {
         var un = P.cardUnlocked(c.id), on = d.cards.indexOf(c.id) >= 0 && un;
@@ -518,8 +521,23 @@
           h('div', { class: 'ci-main' }, h('b', null, c.name), h('div', { class: 'ci-desc' }, c.desc), un ? null : h('div', { class: 'ci-lock' }, lock)),
           on ? h('i', { class: 'deck-badge' }, '携带') : null);
       }));
-      var el = this.page('锦囊', h('div', null,
-        h('div', { class: 'page-tip' }, '每局带 ' + G.CARD_SLOTS + ' 个锦囊，战斗中各能发动一次（点一下看说明，再点一下发动；电脑上按 Q / E）。点卡片选择携带，已选 ' + P.activeCards().length + ' / ' + G.CARD_SLOTS + '。'),
+      var skills = h('div', { class: 'card-list' }, G.SKILLS.map(function (k) {
+        var un = P.skillUnlocked(k.id), on = d.skills.indexOf(k.id) >= 0 && un;
+        var lock = k.unlock.rank != null ? '达到「' + rankLabel(G.RANKS[k.unlock.rank]) + '」解锁' : '通关战役「' + G.CAMP[k.unlock.camp].name + '」解锁';
+        return h('div', { class: 'card-item skill' + (un ? '' : ' locked') + (on ? ' on' : ''), onclick: function () {
+          if (!un) { self.toast(lock); return; }
+          A.play('click'); P.toggleSkill(k.id); self.showCards();
+        } },
+          h('div', { class: 'ci-orb' }, k.ch),
+          h('div', { class: 'ci-main' }, h('b', null, k.name, h('span', { class: 'ci-cd' }, '冷却 ' + k.cd + ' 秒')), h('div', { class: 'ci-desc' }, k.desc), un ? null : h('div', { class: 'ci-lock' }, lock)),
+          on ? h('i', { class: 'deck-badge' }, '携带') : null);
+      }));
+      var el = this.page('锦囊军令', h('div', null,
+        h('div', { class: 'page-sub' }, '军令', h('small', null, '可以反复使用，冷却好了再放 · 已选 ' + P.activeSkills().length + '/' + G.SKILL_SLOTS)),
+        h('div', { class: 'page-tip' }, '左下角两个圆按钮。点一下，再点我方路上的位置就能施放；电脑上按 Z / X。'),
+        skills,
+        h('div', { class: 'page-sub' }, '锦囊', h('small', null, '每局各用一次 · 已选 ' + P.activeCards().length + '/' + G.CARD_SLOTS)),
+        h('div', { class: 'page-tip' }, '右下角的锦囊袋。点一下看说明，再点一下发动；电脑上按 Q / E。'),
         list));
       this.setScreen(el, 'cards');
     },
@@ -578,7 +596,7 @@
           var wp = G.WEAPON[cfg.weapons[gid].id];
           return h('span', { class: 'mini-gen big' }, G.GEN[gid].name, h('small', { style: 'color:' + G.RARITY_COLOR[wp.rarity] }, wp.name));
         })),
-        h('div', { class: 'dh-row' }, '锦囊：' + cfg.cards.map(function (c) { return G.CARD[c].name; }).join('、')),
+        h('div', { class: 'dh-row' }, '军令：' + cfg.skills.map(function (c) { return G.SKILL[c].name; }).join('、') + ' · 锦囊：' + cfg.cards.map(function (c) { return G.CARD[c].name; }).join('、')),
         h('div', { class: 'dh-row' }, '今日最佳：' + (mine ? G.fmt(mine) + ' 分' : '还没挑战') + (d.daily.rewarded === cfg.day ? '' : ' · 首次挑战送 150 铜钱和 2 块碎片')),
         h('button', { class: 'btn big red', onclick: function () { A.play('click'); self.startDaily(); } }, '开始挑战'));
       var tabs = h('div', { class: 'tabs' },
@@ -806,10 +824,11 @@
         '<h4>征兵</h4>点<b>征兵</b>花馒头招来 5 个字，放在下方的“营”里。再征一次会把营里没用掉的字全部换掉，所以先挑有用的拖上场。每征一次价格会涨。',
         '<h4>排兵布阵</h4>把字拖到<b>白色营地</b>上。拖动时会显示射程圈：<b>刀、骑</b>只能打身边一圈，<b>枪</b>远一点，<b>弓</b>最远。场上的兵可以随时拖动换位。',
         '<h4>合成</h4>两个<b>相同等级、相同的字</b>叠在一起会升一级，伤害翻倍还腾出一块地。<b>武将</b>由两个字组成：把“赵”和“云”拼起来，赵子龙就来了；再拼上“赵”或“云”还能继续升星。',
-        '<h4>馒头</h4>打死贼兵、每波开始都会得馒头。<b>农</b>夫不会打仗，但会定时蒸馒头。把用不上的兵拖回“营”能换回一些馒头。',
-        '<h4>道具</h4>营里偶尔会刷出红色的道具：<b>铲</b>可以把我方草地挖成营地，<b>令</b>直接升一级，<b>砚</b>把兵变成别的兵，<b>雷</b>埋在路上，<b>鼓</b>全军加速，<b>丹</b>给阿斗回一颗心。',
+        '<h4>馒头</h4>打死贼兵、每波开始都会得馒头。<b>农</b>夫不会打仗，但会定时蒸馒头，而且可以直接种在草地上，不占营地。把用不上的兵拖回“营”能换回一些馒头。',
+        '<h4>道具</h4>营里会刷出红色的道具：<b>铲</b>可以把我方草地挖成营地（经常出，没用完的会收进右边的军需栏），<b>令</b>直接升一级，<b>砚</b>把兵变成别的兵，<b>雷</b>埋在路上，<b>鼓</b>全军加速，<b>丹</b>给阿斗回一颗心。',
         '<h4>贼兵</h4><b>寇</b>跑得快，<b>匪</b>血厚，<b>甲</b>穿重甲（枪可以无视），<b>巫</b>会给同伙回血，<b>盗</b>身上揣着馒头。每 5 波来一个 Boss。',
         '<h4>字阵羁绊</h4>相邻的两个字连成词有加成：<b>刀枪</b>伤害、<b>弓骑</b>攻速、<b>枪骑</b>冲锋更快、<b>农</b>挨着兵会<b>屯田</b>多产馒头。三个同种兵连成一线是<b>长蛇阵</b>，刀枪弓骑围成田字是<b>四象阵</b>。武将也有羁绊：刘关张同场<b>桃园结义</b>、五虎到三位<b>五虎上将</b>……场上会画出连线。点顶部的波次可以查看我方羁绊和下一波敌情。',
+        '<h4>军令（可反复使用）</h4>左下角两个圆按钮：箭雨、落石、拒马、擂鼓、天雷、阿斗大哭……点一下，再点我方路上的位置施放，冷却好了还能再放。',
         '<h4>锦囊</h4>每局带两个锦囊（空城计、火攻、草船借箭……），右下角点一下看说明、再点一下发动，每个只能用一次。对手也会用，小心「借刀杀人」把贼兵丢到你这边。',
         '<h4>天气与事件</h4>每局天气不同：大雾射程变短、东风火势更旺、暴雨贼兵变慢、夜袭贼多馒头也多。每隔几波还会有随机事件，比如天降粮草、流民投军、疫病流行。',
         '<h4>养成</h4>赢了升段位、拿铜钱和兵器碎片。在<b>兵器</b>里合成兵器，在<b>武将</b>里给武将装上，并挑最多 4 名武将出战。',

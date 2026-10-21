@@ -85,6 +85,7 @@
     this.blasts = [];
     this.snakes = [];
     this.mines = [];
+    this.barriers = [];
     this.winner = -1;
     this.drops = [];
     this.bossKills = [];
@@ -154,6 +155,7 @@
       maxHearts: (this.rules.hearts || 3) + (sup.heart ? 1 : 0),
       buns: (this.rules.buns || 20) + (sup.buns ? 40 : 0),
       cards: (c.cards || []).slice(0, G.CARD_SLOTS).map(function (id) { return { id: id, used: false }; }),
+      skills: (c.skills || []).slice(0, G.SKILL_SLOTS).map(function (id) { return { id: id, cd: 0, uses: 0 }; }),
       dmgBuffs: [],
       linkT: 0,
       boardVer: 1, bondVer: 0, bonds: [], flags: {},
@@ -211,7 +213,7 @@
   B.hpScale = function (n) {
     var early = n <= 1 ? 0.5 : n === 2 ? 0.65 : n === 3 ? 0.82 : 1;
     var rankM = 1 + (this.hpMult - 1) * Math.min(1, n / 8);   // 段位加血在前几波慢慢生效
-    var late = Math.pow(1.05, Math.max(0, n - 12));            // 后期加压，避免对局拖太久
+    var late = Math.pow(1.13, Math.max(0, n - 9));            // 后期加压，避免对局拖太久
     return 46 * early * Math.pow(1.19, n - 1) * (1 + 0.03 * n) * rankM * late * this.levelHp;
   };
 
@@ -379,6 +381,7 @@
     this.tickZones(dt);
     this.tickBlasts(dt);
     this.tickSnakes(dt);
+    for (var bi = this.barriers.length - 1; bi >= 0; bi--) { this.barriers[bi].t -= dt; if (this.barriers[bi].t <= 0) this.barriers.splice(bi, 1); }
     this.checkEnd();
   };
 
@@ -419,6 +422,7 @@
     for (i = side.buffs.length - 1; i >= 0; i--) { side.buffs[i].t -= dt; if (side.buffs[i].t <= 0) side.buffs.splice(i, 1); }
     for (i = side.dmgBuffs.length - 1; i >= 0; i--) { side.dmgBuffs[i].t -= dt; if (side.dmgBuffs[i].t <= 0) side.dmgBuffs.splice(i, 1); }
     if (side.linkT > 0) side.linkT -= dt;
+    for (i = 0; i < side.skills.length; i++) if (side.skills[i].cd > 0) side.skills[i].cd -= dt;
     if (side.bondVer !== side.boardVer) this.refreshBonds(side);
     // 曹操减速光环
     var auras = [];
@@ -489,7 +493,18 @@
       var spd = e.spd * e.slowMult * aura;
       if (e.dashT > 0) { e.dashT -= dt; spd = 5; }
       if (e.charmT > 0) { e.charmT -= dt; spd = -0.6 * e.spd; }
-      e.dist = Math.max(0, e.dist + spd * dt);
+      var nd = Math.max(0, e.dist + spd * dt);
+      // 拒马：普通敌人过不去，Boss 被拖慢
+      for (var bi = 0; bi < this.barriers.length; bi++) {
+        var br = this.barriers[bi];
+        if (br.side !== side.idx || e.dist > br.dist) continue;
+        if (nd > br.dist - 0.35) {
+          if (e.boss) nd = e.dist + (nd - e.dist) * 0.4;
+          else nd = Math.max(e.dist, br.dist - 0.35);
+          br.hold = true;
+        }
+      }
+      e.dist = nd;
     }
     var p = lane.pos(e.dist, e.lat);
     e.x = p.x; e.y = p.y; e.dir = p;
@@ -1108,6 +1123,12 @@
           var e = side.enemies[j];
           if (!e.dead && d2(z.x, z.y, e.x, e.y) <= z.r * z.r) this.hurt(side, e, z.dps * dt, z.src, { dot: true, pierceArmor: true });
         }
+      } else if (z.kind === 'arrows') {
+        var sa = this.sides[z.side];
+        for (var ai = 0; ai < sa.enemies.length; ai++) {
+          var ea = sa.enemies[ai];
+          if (!ea.dead && d2(z.x, z.y, ea.x, ea.y) <= z.r * z.r) this.hurt(sa, ea, z.dps * dt, null, { dot: true, pierceArmor: true });
+        }
       } else if (z.kind === 'lanefire') {
         var sd = this.sides[z.side];
         for (var k = 0; k < sd.enemies.length; k++) if (!sd.enemies[k].dead) this.hurt(sd, sd.enemies[k], z.dps * dt, null, { dot: true, pierceArmor: true });
@@ -1127,6 +1148,7 @@
         self.hurt(side, e, b.dmg, b.src, { pierceArmor: true });
         if (b.slow) self.slow(e, 0.6, 2);
         if (b.kind === 'mine') self.stun(e, 0.8);
+        if (b.stun) self.stun(e, b.stun);
       });
       this.emit({ k: b.kind, side: b.side, x: b.x, y: b.y, r: b.r });
     }
@@ -1172,7 +1194,7 @@
     var soldierW = G.SOLDIER_KEYS.map(function (k) { return (!allowed || allowed.indexOf(k) >= 0) ? G.SOLDIERS[k].w : 0; });
     var sumS = soldierW.reduce(function (a, b) { return a + b; }, 0);
     var partW = 12 * side.deck.length; // 每名出战武将固定权重：多带武将不会稀释每个人的碎片
-    var propW = 7;
+    var propW = 10;
     var r = rng() * (sumS + partW + propW);
     if (r < sumS) {
       var key = G.SOLDIER_KEYS[rng.weighted(soldierW)];
@@ -1196,7 +1218,25 @@
     if (side.buns < cost) return false;
     side.buns -= cost;
     if (side.freeRecruits > 0) side.freeRecruits--; else side.recruits++;
+    // 没用完的铲子收进军需栏，不会被刷掉
+    for (var k = 0; k < CAMP; k++) {
+      var old = side.camp[k];
+      if (old && old.kind === 'prop' && old.key === 'shovel' && side.bar.length < 6) side.bar.push(old);
+    }
     for (var i = 0; i < CAMP; i++) side.camp[i] = this.drawItem(side);
+    // 铲子保底：连续两次征兵没出铲子，这次一定给一把（还有草地可挖时）
+    var hasShovel = side.camp.some(function (c) { return c.kind === 'prop' && c.key === 'shovel'; });
+    if (hasShovel) side.sinceShovel = 0;
+    else {
+      side.sinceShovel = (side.sinceShovel || 0) + 1;
+      if (side.sinceShovel >= 3 && this.grassCells(side).length) {
+        for (k = CAMP - 1; k >= 0; k--) {
+          var c = side.camp[k];
+          if (c.kind === 'farmer' || (c.kind === 'soldier' && c.lvl === 1) || c.kind === 'prop') { side.camp[k] = { kind: 'prop', key: 'shovel' }; break; }
+        }
+        side.sinceShovel = 0;
+      }
+    }
     // 第一次征兵至少给三个能打的兵
     if (side.recruits + side.freeRecruits <= 1 || (side.recruits === 1 && side.units.length === 0)) {
       var fighters = side.camp.filter(function (c) { return c.kind === 'soldier'; }).length;
@@ -1257,13 +1297,19 @@
     if (!cell) return null;
     if (it.kind === 'prop') return this.resolveProp(side, it, cell);
     if (cell.side !== side.idx) return null;
-    if (cell.t !== 'S') return null;
+    // 营地谁都能站；草地只有农夫能种
+    if (!(cell.t === 'S' || (cell.t === 'G' && it.kind === 'farmer'))) return null;
     var tu = cell.unit;
     if (src.where === 'board' && tu === src.unit) return null;
     if (!tu) return { kind: src.where === 'board' ? 'move' : 'place' };
     var ck = this.combineKind(it, tu);
     if (ck) return { kind: ck };
-    if (src.where === 'board') return { kind: 'swap' };
+    if (src.where === 'board') {
+      // 互换时，对方也得能站到我原来的格子
+      var from0 = this.cellAt(src.unit.x, src.unit.y);
+      if (from0.t === 'G' && tu.kind !== 'farmer') return null;
+      return { kind: 'swap' };
+    }
     return null;
   };
 
@@ -1432,6 +1478,16 @@
     return out;
   };
 
+  // 我方还空着的草地（农夫能种、铁铲能挖）
+  B.grassCells = function (side, emptyOnly) {
+    var out = [];
+    for (var y = 0; y < H; y++) for (var x = 0; x < W; x++) {
+      var c = this.grid[y][x];
+      if (c.side === side.idx && c.t === 'G' && (!emptyOnly || !c.unit)) out.push(c);
+    }
+    return out;
+  };
+
   B.emptyCells = function (side) {
     var out = [];
     for (var y = 0; y < H; y++) for (var x = 0; x < W; x++) {
@@ -1532,6 +1588,64 @@
     side.bonds.forEach(function (b) {
       if (!old[b.name]) { old[b.name] = 1; self.emit({ k: 'bond', side: side.idx, name: b.name, kind: b.kind, cells: b.cells }); }
     });
+  };
+
+  // ───────────────────────── 军令（可反复使用） ─────────────────────────
+  B.canUseSkill = function (side, i) {
+    var k = side.skills[i];
+    return !!k && k.cd <= 0 && this.state === 'run';
+  };
+
+  // 点在路线附近的位置 → 路线上的落点；离路线太远返回 null
+  B.laneTarget = function (side, x, y) {
+    var lane = this.lanes[side.idx];
+    var d = lane.nearestDist(x, y), p = lane.pos(d);
+    if (d2(p.x, p.y, x, y) > 1.6 * 1.6) return null;
+    return { dist: d, x: p.x, y: p.y };
+  };
+
+  B.useSkill = function (side, i, at) {
+    if (!this.canUseSkill(side, i)) return false;
+    var k = side.skills[i], def = G.SKILL[k.id], self = this;
+    var lane = this.lanes[side.idx];
+    var hp = this.hpScale(Math.max(1, this.wave));
+    var tgt = null;
+    if (def.target === 'lane') {
+      tgt = at ? this.laneTarget(side, at.x, at.y) : null;
+      if (!tgt) return false;
+    }
+    switch (k.id) {
+      case 'arrows':
+        this.zones.push({ side: side.idx, kind: 'arrows', x: tgt.x, y: tgt.y, r: 1.35, t: 2.5, max: 2.5, dps: hp * 0.55 });
+        break;
+      case 'rocks':
+        this.blasts.push({ side: side.idx, kind: 'rock', t: 0.55, x: tgt.x, y: tgt.y, r: 1.05, dmg: hp * 1.1, stun: 1.5, src: null });
+        break;
+      case 'jvma':
+        this.barriers.push({ side: side.idx, dist: tgt.dist, x: tgt.x, y: tgt.y, t: 5, max: 5 });
+        break;
+      case 'drum':
+        side.buffs.push({ m: 0.35, t: 6 });
+        break;
+      case 'thunder':
+        var cands = this.enemiesNear(side, tgt.x, tgt.y, 1.8);
+        if (cands.length) {
+          cands.sort(function (a, b) { return b.hp - a.hp; });
+          var victim = cands[0];
+          this.hurt(side, victim, hp * 3.2, null, { pierceArmor: true, crit: true });
+          tgt = { x: victim.x, y: victim.y, dist: victim.dist };
+        }
+        break;
+      case 'cry':
+        side.enemies.forEach(function (e) {
+          if (!e.dead && lane.len - e.dist < 3) { self.knock(e, e.boss ? 0.5 * 4 : 1.5); self.slow(e, 0.5, 3); }
+        });
+        break;
+    }
+    k.cd = def.cd;
+    k.uses++;
+    this.emit({ k: 'order', side: side.idx, id: k.id, x: tgt ? tgt.x : null, y: tgt ? tgt.y : null });
+    return true;
   };
 
   // ───────────────────────── 锦囊 ─────────────────────────

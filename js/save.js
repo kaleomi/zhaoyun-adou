@@ -22,6 +22,7 @@
       use: {},
       settings: { music: 0.6, sfx: 0.85, dmg: true, speed: 1, vibrate: true },
       cards: ['kongcheng', 'huogong'],
+      skills: ['arrows', 'rocks'],
       campaign: {},
       daily: { day: '', best: 0, plays: 0, rewarded: '' },
       pid: '',
@@ -88,6 +89,28 @@
     activeCards: function () {
       var self = this;
       return this.data.cards.filter(function (id) { return self.cardUnlocked(id); }).slice(0, G.CARD_SLOTS);
+    },
+
+    // ── 军令 ──
+    skillUnlocked: function (id) {
+      var k = G.SKILL[id];
+      if (!k) return false;
+      if (k.unlock.rank != null) return this.rankIdx() >= k.unlock.rank;
+      if (k.unlock.camp) return (this.data.campaign[k.unlock.camp] || 0) > 0;
+      return false;
+    },
+    toggleSkill: function (id) {
+      var d = this.data, i = d.skills.indexOf(id);
+      if (i >= 0) { d.skills.splice(i, 1); this.save(); return true; }
+      if (!this.skillUnlocked(id)) return false;
+      if (d.skills.length >= G.SKILL_SLOTS) d.skills.shift();
+      d.skills.push(id);
+      this.save();
+      return true;
+    },
+    activeSkills: function () {
+      var self = this;
+      return this.data.skills.filter(function (id) { return self.skillUnlocked(id); }).slice(0, G.SKILL_SLOTS);
     },
 
     // ── 战役 ──
