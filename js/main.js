@@ -10,7 +10,7 @@
     // 字体最多等 2.5 秒，加载不到就先用系统楷体
     try {
       if (window.FontFace && document.fonts) {
-        var f = new FontFace('ZYBrush', 'url(fonts/brush.woff2) format("woff2")', { display: 'swap' });
+        var f = new FontFace('ZYBrush', 'url(' + (window.ZY_FONT_URL || 'fonts/brush.woff2') + ') format("woff2")', { display: 'swap' });
         document.fonts.add(f);
         f.load().then(go, go);
         setTimeout(go, 2500);
