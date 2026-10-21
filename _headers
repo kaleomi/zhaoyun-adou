@@ -1,0 +1,10 @@
+/js/*
+  Cache-Control: public, max-age=0, must-revalidate
+/css/*
+  Cache-Control: public, max-age=0, must-revalidate
+/sw.js
+  Cache-Control: no-cache
+/fonts/*
+  Cache-Control: public, max-age=2592000
+/icons/*
+  Cache-Control: public, max-age=2592000
