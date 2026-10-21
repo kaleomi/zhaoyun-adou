@@ -22,6 +22,8 @@
 
   A.update = function (dt) {
     if (this.b.state === 'over') return;
+    this.cardT = (this.cardT || 0) - dt;
+    if (this.cardT <= 0) { this.cardT = 1 + this.rng() * 0.8; this.thinkCards(); }
     this.t -= dt;
     if (this.t > 0) return;
     this.t = DELAY[this.d] * (0.7 + this.rng() * 0.6);
@@ -50,11 +52,58 @@
 
   A.bestCell = function (item, cells) {
     var self = this, r = this.rangeOf(item);
+    var bondW = this.d >= 2 ? 6 : (this.d === 1 ? 3 : 0);
     if (item.kind === 'farmer') {
-      // 农夫放在最没用的格子
-      return cells.slice().sort(function (a, b) { return self.coverage(a.x, a.y, 1.6) - self.coverage(b.x, b.y, 1.6); })[0];
+      // 农夫放在最没用、但挨着兵（屯田）的格子
+      return cells.slice().sort(function (a, b) { return (self.coverage(a.x, a.y, 1.6) - bondW * self.bondGain(item, a.x, a.y)) - (self.coverage(b.x, b.y, 1.6) - bondW * self.bondGain(item, b.x, b.y)); })[0];
     }
-    return cells.slice().sort(function (a, b) { return self.coverage(b.x, b.y, r) - self.coverage(a.x, a.y, r); })[0];
+    var score = function (c) { return self.coverage(c.x, c.y, r) + bondW * self.bondGain(item, c.x, c.y); };
+    return cells.slice().sort(function (a, b) { return score(b) - score(a); })[0];
+  };
+
+  // 放在这里能新凑出几个字阵
+  A.bondGain = function (item, x, y) {
+    if (item.kind !== 'soldier' && item.kind !== 'farmer') return 0;
+    var b = this.b, side = this.side, g = 0;
+    var at = function (cx, cy) { var u = b.unitAt(cx, cy); return u && u.side === side.idx && (u.kind === 'soldier' || u.kind === 'farmer') ? u : null; };
+    [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (d) {
+      var v = at(x + d[0], y + d[1]);
+      if (!v) return;
+      var word = G.WORD_BONDS.some(function (w) { return (w.a === item.key && w.b === v.key) || (w.b === item.key && w.a === v.key); });
+      if (!word && (item.key === 'nong') !== (v.key === 'nong')) word = true;
+      if (word) g++;
+      var v2 = at(x + 2 * d[0], y + 2 * d[1]);
+      if (item.kind === 'soldier' && v.key === item.key && v2 && v2.key === item.key) g++;
+    });
+    return g;
+  };
+
+  // 什么时候用锦囊
+  A.thinkCards = function () {
+    var b = this.b, side = this.side;
+    if (b.state !== 'run' || !side.cards || !side.cards.length) return;
+    if (this.d === 0 && this.rng.chance(0.5)) return;
+    var lane = b.lanes[side.idx];
+    var en = side.enemies.filter(function (e) { return !e.dead; });
+    var near = en.some(function (e) { return lane.len - e.dist < 3; });
+    var boss = en.some(function (e) { return e.boss; });
+    var bossNear = en.some(function (e) { return e.boss && lane.len - e.dist < 6; });
+    for (var i = 0; i < side.cards.length; i++) {
+      var c = side.cards[i];
+      if (c.used || !b.canUseCard(side, i)) continue;
+      var use = false;
+      switch (c.id) {
+        case 'kongcheng': use = near || bossNear; break;
+        case 'huogong': use = en.length >= 9 || (boss && en.length >= 4); break;
+        case 'caochuan': use = en.length >= 6 && side.units.filter(function (u) { return u.key === 'gong' || (u.gen && G.GEN[u.gen].type === 0); }).length >= 2; break;
+        case 'kurou': use = side.hearts >= side.maxHearts && b.wave >= 6 && side.buns < b.recruitCost(side); break;
+        case 'jiedao': use = en.filter(function (e) { return !e.boss; }).length >= 7; break;
+        case 'diaohu': use = near || bossNear; break;
+        case 'lianhuan': use = en.length >= 9; break;
+        case 'andu': use = b.wave >= 4 && side.camp.every(function (x) { return !x; }); break;
+      }
+      if (use) { b.useCard(side, i); return; }
+    }
   };
 
   A.act = function (from, to) { return this.b.act(this.side, from, to); };
@@ -224,6 +273,7 @@
       var w = rng.pick(cands);
       weapons[gid] = { id: w.id, star: 1 + Math.min(4, Math.floor(rankIdx / 12)) };
     });
-    return { deck: deck, weapons: weapons };
+    var cards = G.CARDS.filter(function (c) { return c.unlock.rank != null ? c.unlock.rank <= rankIdx : rankIdx >= 20; }).map(function (c) { return c.id; });
+    return { deck: deck, weapons: weapons, cards: rng.shuffle(cards).slice(0, G.CARD_SLOTS) };
   };
 })(typeof window !== 'undefined' ? window : globalThis);

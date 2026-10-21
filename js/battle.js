@@ -89,13 +89,21 @@
     this.drops = [];
     this.bossKills = [];
     this.tutorial = !!cfg.tutorial;
+    this.rules = cfg.rules || {};
+    this.solo = this.mode !== 'pvp';
+    this.targetWaves = cfg.waves || 0;
+    this.weather = cfg.weather || 'clear';
+    this.eventsOn = cfg.events != null ? !!cfg.events : (this.mode === 'pvp' || this.mode === 'endless' || this.mode === 'daily');
+    this.lastEventWave = 0;
+    this.upcoming = null;
     this.lanes = [new Lane(this.map.path), new Lane(this.map.path.map(rot))];
     this.buildGrid();
     this.sides = [];
-    var n = this.mode === 'endless' ? 1 : 2;
+    var n = this.solo ? 1 : 2;
     for (var s = 0; s < n; s++) this.sides.push(this.makeSide(s, cfg.sides[s] || {}));
-    this.hpMult = 1 + (this.rank.hpAdd || 0) * 0.6;
-    if (this.tutorial) this.hpMult *= 0.75;
+    this.hpMult = 1 + (this.rank.hpAdd || 0) * 0.6;   // 段位加血，前几波慢慢生效
+    this.levelHp = cfg.hpMult || 1;                     // 关卡难度，从第一波起就生效
+    if (this.tutorial) this.levelHp *= 0.75;
   }
   G.Battle = Battle;
   G.Lane = Lane;
@@ -142,9 +150,13 @@
       dmgMult: c.dmgMult || 1,
       deck: (c.deck || ['zhaoyun']).slice(0, G.DECK_SIZE),
       weapons: c.weapons || {},          // genId -> {id, star}
-      hearts: sup.heart ? 4 : 3,
-      maxHearts: sup.heart ? 4 : 3,
-      buns: 20 + (sup.buns ? 40 : 0),
+      hearts: (this.rules.hearts || 3) + (sup.heart ? 1 : 0),
+      maxHearts: (this.rules.hearts || 3) + (sup.heart ? 1 : 0),
+      buns: (this.rules.buns || 20) + (sup.buns ? 40 : 0),
+      cards: (c.cards || []).slice(0, G.CARD_SLOTS).map(function (id) { return { id: id, used: false }; }),
+      dmgBuffs: [],
+      linkT: 0,
+      boardVer: 1, bondVer: 0, bonds: [], flags: {},
       recruits: 0,
       freeRecruits: sup.recruit ? 3 : 0,
       camp: [null, null, null, null, null],
@@ -185,8 +197,12 @@
   B.emit = function (e) { if (this.ev.length < 400) this.ev.push(e); };
 
   // ───────────────────────── 波次 ─────────────────────────
-  B.isBossWave = function (n) { return n > 0 && n % 5 === 0; };
+  B.isBossWave = function (n) {
+    if (this.rules.bosses) return !!this.rules.bosses[n];
+    return n > 0 && n % 5 === 0;
+  };
   B.bossFor = function (n) {
+    if (this.rules.bosses && this.rules.bosses[n]) return this.rules.bosses[n];
     var k = n / 5 - 1;
     if (this.cfg.rankIdx >= 35 && n % 10 === 0) return G.SPECIAL_BOSSES[(this.rng.int(3))];
     if (this.map.id === 2 && n === 10) return 'lvbu';
@@ -196,7 +212,7 @@
     var early = n <= 1 ? 0.5 : n === 2 ? 0.65 : n === 3 ? 0.82 : 1;
     var rankM = 1 + (this.hpMult - 1) * Math.min(1, n / 8);   // 段位加血在前几波慢慢生效
     var late = Math.pow(1.05, Math.max(0, n - 12));            // 后期加压，避免对局拖太久
-    return 46 * early * Math.pow(1.19, n - 1) * (1 + 0.03 * n) * rankM * late;
+    return 46 * early * Math.pow(1.19, n - 1) * (1 + 0.03 * n) * rankM * late * this.levelHp;
   };
 
   B.genWave = function (n) {
@@ -205,7 +221,10 @@
     var count = Math.min(30, Math.floor(4.5 + n * 1.0));
     if (n % 3 === 0) count = Math.round(count * 1.25);
     if (this.tutorial && n <= 2) count = Math.max(4, count - 2);
-    var weights = function () {
+    if (this.rules.countMult) count = Math.round(count * this.rules.countMult);
+    if (this.weather === 'night') count = Math.round(count * 1.2);
+    var mix = this.rules.mix;
+    var weights = mix ? Object.assign({}, mix) : function () {
       var w = { zei: 10, kou: 0, fei: 0, dao: 0, wu: 0, jia: 0 };
       if (n >= 3) w.kou = 3;
       if (n >= 4) w.fei = 2;
@@ -219,6 +238,7 @@
     var wv = keys.map(function (k) { return weights[k]; });
     var t = 0.6;
     var boss = null;
+    if (this.targetWaves && n > this.targetWaves) return { list: [], dur: 999, boss: null };
     if (this.isBossWave(n)) {
       boss = this.bossFor(n);
       list.push({ t: 1.5, boss: boss });
@@ -240,13 +260,59 @@
 
   B.startWave = function () {
     this.wave++;
-    var wv = this.genWave(this.wave);
+    var wv = (this.upcoming && this.upcoming.n === this.wave) ? this.upcoming : this.genWave(this.wave);
+    this.upcoming = this.genWave(this.wave + 1);
+    this.upcoming.n = this.wave + 1;
     this.waveT = 0;
     this.waveDur = wv.dur;
     this.waveSpawns = this.sides.map(function () { return wv.list.slice(); });
     var bonus = this.wave === 1 ? 0 : 10 + 2 * this.wave;
     this.sides.forEach(function (s) { s.buns += bonus; s.bunsEarned += bonus; });
     this.emit({ k: 'wave', n: this.wave, boss: wv.boss });
+    // 随机事件：每隔几波来一次，双方同时生效
+    if (this.eventsOn && this.wave >= 3 && !wv.boss && this.wave - this.lastEventWave >= 4 && this.rng.chance(0.6)) {
+      this.lastEventWave = this.wave;
+      this.applyEvent(this.rng.pick(G.EVENTS).id);
+    }
+  };
+
+  // 下一波预告
+  B.nextWaveInfo = function () {
+    var u = this.upcoming;
+    if (!u || !u.list.length) return null;
+    var counts = {};
+    u.list.forEach(function (sp) { if (sp.type) counts[sp.type] = (counts[sp.type] || 0) + 1; });
+    return { n: u.n, counts: counts, boss: u.boss };
+  };
+
+  B.applyEvent = function (id) {
+    var self = this;
+    this.sides.forEach(function (side) {
+      switch (id) {
+        case 'grain': side.buns += 30; side.bunsEarned += 30; break;
+        case 'volunteer':
+          var cells = self.emptyCells(side);
+          if (cells.length) {
+            var c = self.rng.pick(cells);
+            var u = self.newUnit(side, { kind: 'soldier', key: self.rng.pick(['dao', 'qiang', 'gong', 'qi']), lvl: 2 }, c.x, c.y);
+            c.unit = u; side.units.push(u); side.boardVer++;
+          } else { side.buns += 15; }
+          break;
+        case 'plague':
+          side.enemies.forEach(function (e) { e.hp = Math.max(1, e.hp * (e.boss ? 0.9 : 0.7)); });
+          break;
+        case 'spy':
+          self.rng.shuffle(side.units.filter(function (u) { return u.kind !== 'farmer'; })).slice(0, 2).forEach(function (u) { u.chaosT = 4; });
+          break;
+        case 'levy':
+          var filled = false;
+          for (var i = 0; i < 5; i++) if (!side.camp[i]) { side.camp[i] = self.drawItem(side); filled = true; }
+          if (!filled) side.buns += 10;
+          break;
+        case 'cheer': side.buffs.push({ m: 0.25, t: 15 }); break;
+      }
+    });
+    this.emit({ k: 'event', id: id });
   };
 
   B.spawnEnemy = function (side, sp) {
@@ -300,9 +366,14 @@
       var side = this.sides[s], q = this.waveSpawns[s];
       while (q.length && q[0].t <= this.waveT) this.spawnEnemy(side, q.shift());
     }
-    if (this.waveT >= this.waveDur) this.startWave();
+    if (this.waveT >= this.waveDur && !(this.targetWaves && this.wave >= this.targetWaves)) this.startWave();
 
     for (s = 0; s < this.sides.length; s++) this.tickSide(this.sides[s], dt);
+    // 闯关：最后一波清完就过关
+    if (this.targetWaves && this.wave >= this.targetWaves && !this.waveSpawns[0].length && !this.sides[0].enemies.length && this.sides[0].hearts > 0) {
+      this.end(0);
+      return;
+    }
     this.tickProjectiles(dt);
     this.tickSweeps(dt);
     this.tickZones(dt);
@@ -319,7 +390,7 @@
   };
 
   B.checkEnd = function () {
-    if (this.mode === 'endless') {
+    if (this.solo) {
       if (this.sides[0].hearts <= 0) this.end(-1);
       return;
     }
@@ -346,6 +417,9 @@
     var i, e, lane = this.lanes[side.idx];
     // 全军增益
     for (i = side.buffs.length - 1; i >= 0; i--) { side.buffs[i].t -= dt; if (side.buffs[i].t <= 0) side.buffs.splice(i, 1); }
+    for (i = side.dmgBuffs.length - 1; i >= 0; i--) { side.dmgBuffs[i].t -= dt; if (side.dmgBuffs[i].t <= 0) side.dmgBuffs.splice(i, 1); }
+    if (side.linkT > 0) side.linkT -= dt;
+    if (side.bondVer !== side.boardVer) this.refreshBonds(side);
     // 曹操减速光环
     var auras = [];
     for (i = 0; i < side.units.length; i++) {
@@ -406,8 +480,11 @@
     var aura = 1;
     for (var a = 0; a < auras.length; a++) {
       var u = auras[a];
-      if (d2(u.x + 0.5, u.y + 0.5, e.x, e.y) <= Math.pow(this.unitStats(u).range, 2)) { aura = 0.75; break; }
+      if (d2(u.x + 0.5, u.y + 0.5, e.x, e.y) <= Math.pow(this.unitStats(u).range, 2)) { aura = side.flags.huwei ? 0.6 : 0.75; break; }
     }
+    if (this.weather === 'rain') aura *= 0.85;
+    if (this.rules.enemySpd) aura *= this.rules.enemySpd;
+    if (e.armorT > 0) e.armorT -= dt;
     if (e.stunT <= 0) {
       var spd = e.spd * e.slowMult * aura;
       if (e.dashT > 0) { e.dashT -= dt; spd = 5; }
@@ -460,6 +537,13 @@
           ch.forEach(function (u) { u.lockT = 3; self.emit({ k: 'lock', side: side.idx, x: u.x + 0.5, y: u.y + 0.5, by: '链' }); });
         }
         break;
+      case 'caoren':
+        if (e.abilityT <= 0) {
+          e.abilityT = 7;
+          side.enemies.forEach(function (o) { if (!o.dead && Math.abs(o.dist - e.dist) < 1.8) o.armorT = 4; });
+          this.emit({ k: 'skill', side: side.idx, x: e.x, y: e.y, name: '八门金锁', enemy: true });
+        }
+        break;
       case 'lvbu':
         e.stunT = 0; e.slowMult = 1; e.charmT = 0;
         if (e.abilityT <= 0) { e.abilityT = 6; e.dashT = 0.4; this.emit({ k: 'dash', side: side.idx, x: e.x, y: e.y }); }
@@ -509,14 +593,31 @@
 
   B.unitStats = function (u) {
     var s, base, side = this.sides[u.side];
+    if (u.kind === 'farmer') return { dmg: 0, cd: 99, range: 0, atk: 'none' };
+    var out;
     if (u.kind === 'soldier') {
       s = G.SOLDIERS[u.key];
-      return { dmg: s.dmg * G.lvlMult(u.lvl) * side.dmgMult, cd: s.cd * Math.pow(0.96, u.lvl - 1), range: s.range, atk: s.atk, type: s.type };
-    }
-    if (u.kind === 'farmer') return { dmg: 0, cd: 99, range: 0, atk: 'none' };
-    var g = G.GEN[u.gen];
-    base = G.GEN_BASE[g.type];
-    if (u.kind === 'part') return { dmg: base.dmg * 0.45 * side.dmgMult, cd: base.cd * 1.1, range: base.range, atk: G.WTYPE_ATK[g.type], type: g.type };
+      out = { dmg: s.dmg * G.lvlMult(u.lvl) * side.dmgMult, cd: s.cd * Math.pow(0.96, u.lvl - 1), range: s.range, atk: s.atk, type: s.type };
+    } else if (u.kind === 'part') {
+      var gp = G.GEN[u.gen], bp = G.GEN_BASE[gp.type];
+      out = { dmg: bp.dmg * 0.45 * side.dmgMult, cd: bp.cd * 1.1, range: bp.range, atk: G.WTYPE_ATK[gp.type], type: gp.type };
+    } else out = this.genStats(side, u);
+    return this.modStats(side, u, out);
+  };
+
+  // 羁绊、天气、全军增益对属性的修正
+  B.modStats = function (side, u, st) {
+    var dm = 1 + (u.bDmg || 0);
+    for (var i = 0; i < side.dmgBuffs.length; i++) dm += side.dmgBuffs[i].m;
+    st.dmg *= dm;
+    st.range += (u.bRange || 0);
+    if (this.weather === 'fog') st.range *= 0.8;
+    if (this.weather === 'wind' && st.type === 0) st.range += 0.5;
+    return st;
+  };
+
+  B.genStats = function (side, u) {
+    var g = G.GEN[u.gen], base = G.GEN_BASE[g.type];
     var dmg = base.dmg + (u.weapon ? G.weaponAtk(u.weapon, u.wstar) : 0);
     dmg *= G.genLvlMult(u.lvl) * side.dmgMult;
     var range = base.range;
@@ -540,6 +641,8 @@
       if (o !== u && o.kind === 'general' && o.gen === 'liubei' && Math.abs(o.x - u.x) <= 1 && Math.abs(o.y - u.y) <= 1) { m += 0.25; break; }
     }
     if (u.ramp) m += u.ramp;
+    m += (u.bSpd || 0);
+    if (this.weather === 'heat') m *= 0.9;
     return m;
   };
 
@@ -548,7 +651,7 @@
     u.farmT += dt;
     if (u.farmT >= 10) {
       u.farmT = 0;
-      var y = G.farmerYield(u.lvl);
+      var y = Math.round(G.farmerYield(u.lvl) * (1 + 0.25 * (u.tuntian || 0)) * (this.weather === 'heat' ? 2 : 1));
       side.buns += y; side.bunsEarned += y;
       this.emit({ k: 'farm', side: side.idx, x: u.x + 0.5, y: u.y + 0.5, n: y });
     }
@@ -611,7 +714,7 @@
     var anyEnemy = side.enemies.length > 0;
     switch (u.gen) {
       case 'zhaoyun':
-        if (u.skillT >= 9 && anyEnemy) {
+        if (u.skillT >= (this.rules.zyBoost ? 5 : 9) && anyEnemy) {
           u.skillT = 0;
           this.addSweep(side, u, { kind: 'zhaoyun', ch: '云', dmg: st.dmg * 3, spd: 10, r: 0.65 });
           this.emit({ k: 'skill', side: side.idx, x: cx, y: cy, name: '七进七出' });
@@ -636,14 +739,14 @@
         }
         break;
       case 'kongming':
-        if (u.skillT >= 15 && anyEnemy) {
+        if (u.skillT >= (side.flags.sangu ? 9 : 15) && anyEnemy) {
           u.skillT = 0;
           side.buffs.push({ m: 0.3, t: 5 });
           this.emit({ k: 'wind', side: side.idx, x: cx, y: cy, name: '借东风' });
         }
         break;
       case 'zhenfu':
-        if (u.skillT >= 8 && anyEnemy) {
+        if (u.skillT >= (side.flags.tongque ? 5 : 8) && anyEnemy) {
           u.skillT = 0;
           this.addSweep(side, u, { kind: 'water', ch: '波', dmg: st.dmg * 1.5, spd: 6, r: 0.7, slow: 0.6, slowT: 3 });
           this.emit({ k: 'skill', side: side.idx, x: cx, y: cy, name: '凌波' });
@@ -731,7 +834,7 @@
         }
         break;
       case 'charge':
-        if (u.atkN % 3 === 0) {
+        if (u.atkN % (u.lancer ? 2 : 3) === 0) {
           this.hurt(side, target, dmg * 2.5, u, opts);
           this.knock(target, 0.35);
           this.emit({ k: 'charge', side: side.idx, x: target.x, y: target.y, fx: cx, fy: cy });
@@ -741,11 +844,11 @@
         }
         break;
       case 'sword':
-        if (g === 'zhouyu' && u.atkN % 3 === 0) {
-          this.zones.push({ side: side.idx, kind: 'fire', dist: target.dist, x: target.x, y: target.y, r: 0.75, t: 4, max: 4, dps: dmg * 0.8, src: u });
+        if (g === 'zhouyu' && u.atkN % (side.flags.jisheng ? 2 : 3) === 0) {
+          this.addFire(side, target, 0.75, 4, dmg * 0.8, u);
         }
         this.hurt(side, target, dmg, u, opts);
-        if (g === 'diaochan' && !target.boss && this.rng.chance(0.15)) { target.charmT = 2; this.emit({ k: 'charmE', side: side.idx, x: target.x, y: target.y }); }
+        if (g === 'diaochan' && !target.boss && this.rng.chance(side.flags.lianhuan ? 0.3 : 0.15)) { target.charmT = 2; this.emit({ k: 'charmE', side: side.idx, x: target.x, y: target.y }); }
         this.emit({ k: 'sword', side: side.idx, x: target.x, y: target.y, fx: cx, fy: cy, gen: !!g });
         break;
     }
@@ -766,7 +869,7 @@
     switch (w) {
       case 2: if (rng.chance(0.1)) this.knock(target, 0.5); break;
       case 4: if (rng.chance(0.1)) this.addSweep(side, u, { kind: 'eagle', ch: '鹰', dmg: dmg * 2, spd: 4, r: 0.6 }); break;
-      case 5: if (rng.chance(0.1)) { this.zones.push({ side: side.idx, kind: 'fire', dist: target.dist, x: target.x, y: target.y, r: 1.2, t: 4, max: 4, dps: dmg, src: u }); this.emit({ k: 'dragon', side: side.idx, x: target.x, y: target.y }); } break;
+      case 5: if (rng.chance(0.1)) { this.addFire(side, target, 1.2, 4, dmg, u); this.emit({ k: 'dragon', side: side.idx, x: target.x, y: target.y }); } break;
       case 9:
         u.swordN++;
         if (u.swordN >= 10) {
@@ -851,6 +954,17 @@
     }
   };
 
+  B.fireDur = function (side, t) {
+    if (this.weather === 'wind') t *= 2;
+    if (this.weather === 'rain') t *= 0.5;
+    if (side.flags.jisheng) t *= 2;
+    return t;
+  };
+  B.addFire = function (side, at, r, t, dps, src) {
+    t = this.fireDur(side, t);
+    this.zones.push({ side: side.idx, kind: 'fire', dist: at.dist, x: at.x, y: at.y, r: r, t: t, max: t, dps: dps, src: src });
+  };
+
   B.qiBolts = function (side, u, n, dmg) {
     for (var i = 0; i < n; i++) {
       var t = side.enemies.length ? this.rng.pick(side.enemies) : null;
@@ -890,7 +1004,13 @@
   B.hurt = function (side, e, dmg, src, o) {
     if (e.dead || dmg <= 0) return 0;
     o = o || {};
-    if (e.armor && !o.pierceArmor) dmg *= (1 - e.armor);
+    var armor = Math.max(e.armor || 0, e.armorT > 0 ? 0.5 : 0);
+    if (armor && !o.pierceArmor) dmg *= (1 - armor);
+    // 连环计：伤害传给其他敌人
+    if (side.linkT > 0 && !o.link && !o.dot) {
+      var others = side.enemies.filter(function (x) { return x !== e && !x.dead; }).slice(0, 8);
+      for (var li = 0; li < others.length; li++) this.hurt(side, others[li], dmg * 0.1, src, { link: true, pierceArmor: true, dot: true });
+    }
     var before = e.hp;
     e.hp -= dmg;
     e.lastHurtT = this.t;
@@ -906,7 +1026,7 @@
   B.kill = function (side, e, src) {
     if (e.dead) return;
     e.dead = true;
-    var bun = e.bun;
+    var bun = e.bun + (this.weather === 'night' ? 1 : 0);
     // 刘备：射程内击杀多给馒头
     for (var i = 0; i < side.units.length; i++) {
       var u = side.units[i];
@@ -988,6 +1108,9 @@
           var e = side.enemies[j];
           if (!e.dead && d2(z.x, z.y, e.x, e.y) <= z.r * z.r) this.hurt(side, e, z.dps * dt, z.src, { dot: true, pierceArmor: true });
         }
+      } else if (z.kind === 'lanefire') {
+        var sd = this.sides[z.side];
+        for (var k = 0; k < sd.enemies.length; k++) if (!sd.enemies[k].dead) this.hurt(sd, sd.enemies[k], z.dps * dt, null, { dot: true, pierceArmor: true });
       }
       if (z.t <= 0) this.zones.splice(i, 1);
     }
@@ -1045,7 +1168,8 @@
 
   B.drawItem = function (side) {
     var rng = this.rng;
-    var soldierW = G.SOLDIER_KEYS.map(function (k) { return G.SOLDIERS[k].w; });
+    var allowed = this.rules.soldiers;
+    var soldierW = G.SOLDIER_KEYS.map(function (k) { return (!allowed || allowed.indexOf(k) >= 0) ? G.SOLDIERS[k].w : 0; });
     var sumS = soldierW.reduce(function (a, b) { return a + b; }, 0);
     var partW = 12 * side.deck.length; // 每名出战武将固定权重：多带武将不会稀释每个人的碎片
     var propW = 7;
@@ -1077,7 +1201,7 @@
     if (side.recruits + side.freeRecruits <= 1 || (side.recruits === 1 && side.units.length === 0)) {
       var fighters = side.camp.filter(function (c) { return c.kind === 'soldier'; }).length;
       for (i = 0; i < CAMP && fighters < 3; i++) {
-        if (side.camp[i].kind !== 'soldier') { side.camp[i] = { kind: 'soldier', key: this.rng.pick(['dao', 'qiang', 'gong', 'qi']), lvl: 1 }; fighters++; }
+        if (side.camp[i].kind !== 'soldier') { side.camp[i] = { kind: 'soldier', key: this.rng.pick((this.rules.soldiers || ['dao', 'qiang', 'gong', 'qi']).filter(function (k) { return k !== 'nong'; })), lvl: 1 }; fighters++; }
       }
     }
     // 保证新手第一次征兵有得用
@@ -1234,6 +1358,7 @@
         break;
     }
     res.side = side.idx;
+    side.boardVer++;
     this.emit({ k: 'act', side: side.idx, kind: plan.kind, x: x, y: y, prop: it.kind === 'prop' ? it.key : null });
     return res;
   };
@@ -1250,6 +1375,7 @@
   };
 
   B.removeUnit = function (side, u) {
+    side.boardVer++;
     var c = this.cellAt(u.x, u.y);
     if (c && c.unit === u) c.unit = null;
     var i = side.units.indexOf(u);
@@ -1318,10 +1444,155 @@
   B.summary = function () {
     var s0 = this.sides[0];
     var units = s0.units.slice().sort(function (a, b) { return b.dmgDone - a.dmgDone; });
+    var cleared = Math.max(0, this.wave - 1);
     return {
-      winner: this.winner, wave: this.wave, time: this.t,
-      kills: s0.kills, dmg: s0.dmg, leaked: s0.leaked, hearts: s0.hearts,
-      top: units.slice(0, 3), drops: this.drops.slice(), bossKills: this.bossKills.slice()
+      winner: this.winner, wave: this.wave, time: this.t, mode: this.mode,
+      kills: s0.kills, dmg: s0.dmg, leaked: s0.leaked, hearts: s0.hearts, maxHearts: s0.maxHearts,
+      top: units.slice(0, 3), drops: this.drops.slice(), bossKills: this.bossKills.slice(),
+      score: cleared * 1000 + s0.kills * 5 + this.bossKills.length * 500
     };
+  };
+
+  // ───────────────────────── 字阵羁绊 ─────────────────────────
+  var WORD_INDEX = {};
+  G.WORD_BONDS.forEach(function (w) { WORD_INDEX[w.a + '|' + w.b] = w; WORD_INDEX[w.b + '|' + w.a] = w; });
+
+  B.refreshBonds = function (side) {
+    var self = this, us = side.units, i, j, u;
+    var old = {};
+    side.bonds.forEach(function (b) { old[b.name] = 1; });
+    side.bonds = [];
+    side.flags = {};
+    for (i = 0; i < us.length; i++) { u = us[i]; u.bDmg = 0; u.bSpd = 0; u.bRange = 0; u.lancer = false; u.tuntian = 0; }
+    var at = function (x, y) { var c = self.cellAt(x, y); return c && c.unit && c.unit.side === side.idx ? c.unit : null; };
+    var isS = function (x) { return x && (x.kind === 'soldier' || x.kind === 'farmer'); };
+    // 相邻成词
+    for (i = 0; i < us.length; i++) {
+      u = us[i];
+      if (!isS(u)) continue;
+      [[1, 0], [0, 1]].forEach(function (d) {
+        var v = at(u.x + d[0], u.y + d[1]);
+        if (!isS(v)) return;
+        var w = WORD_INDEX[u.key + '|' + v.key];
+        if (!w && (u.key === 'nong') !== (v.key === 'nong')) w = WORD_INDEX['nong|*'];
+        if (!w) return;
+        var pair = [u, v];
+        if (w.dmg) pair.forEach(function (p) { p.bDmg += w.dmg; });
+        if (w.spd) pair.forEach(function (p) { p.bSpd += w.spd; });
+        if (w.lancer) pair.forEach(function (p) { if (p.key === 'qi') p.lancer = true; else p.bRange += 0.3; });
+        if (w.tuntian) pair.forEach(function (p) { if (p.key === 'nong') p.tuntian++; });
+        side.bonds.push({ kind: 'word', name: w.name, desc: w.desc, cells: [[u.x, u.y], [v.x, v.y]] });
+      });
+    }
+    // 长蛇阵：同种兵三个以上连成直线
+    var inSnake = {};
+    [[1, 0], [0, 1]].forEach(function (d) {
+      for (var y = 0; y < 10; y++) for (var x = 0; x < 8; x++) {
+        var a = at(x, y);
+        if (!a || a.kind !== 'soldier') continue;
+        var prev = at(x - d[0], y - d[1]);
+        if (prev && prev.kind === 'soldier' && prev.key === a.key) continue; // 不是起点
+        var run = [a], nx = x + d[0], ny = y + d[1];
+        for (;;) { var b = at(nx, ny); if (b && b.kind === 'soldier' && b.key === a.key) { run.push(b); nx += d[0]; ny += d[1]; } else break; }
+        if (run.length >= 3) {
+          run.forEach(function (r) { if (!inSnake[r.id]) { inSnake[r.id] = 1; r.bDmg += 0.25; } });
+          side.bonds.push({ kind: 'form', name: '长蛇阵', desc: G.FORMATIONS[0].desc, cells: run.map(function (r) { return [r.x, r.y]; }) });
+        }
+      }
+    });
+    // 四象阵：刀枪弓骑围成田字
+    for (var y2 = 0; y2 < 9; y2++) for (var x2 = 0; x2 < 7; x2++) {
+      var q = [at(x2, y2), at(x2 + 1, y2), at(x2, y2 + 1), at(x2 + 1, y2 + 1)];
+      if (q.some(function (z) { return !z || z.kind !== 'soldier'; })) continue;
+      var keys = {}; q.forEach(function (z) { keys[z.key] = 1; });
+      if (keys.dao && keys.qiang && keys.gong && keys.qi) {
+        q.forEach(function (z) { z.bDmg += 0.2; z.bSpd += 0.2; });
+        side.bonds.push({ kind: 'form', name: '四象阵', desc: G.FORMATIONS[1].desc, cells: q.map(function (z) { return [z.x, z.y]; }) });
+      }
+    }
+    // 武将羁绊
+    var gens = {};
+    us.forEach(function (x) { if (x.kind === 'general') (gens[x.gen] = gens[x.gen] || []).push(x); });
+    G.GEN_BONDS.forEach(function (gb) {
+      var members = gb.gens.filter(function (g) { return gens[g]; });
+      if (members.length < gb.need || (gb.req && !gens[gb.req])) return;
+      var mu = [];
+      members.forEach(function (g) { mu = mu.concat(gens[g]); });
+      side.flags[gb.id] = true;
+      switch (gb.id) {
+        case 'wuhu': mu.forEach(function (x) { x.bSpd += members.length >= 5 ? gb.spd5 : gb.spd; }); break;
+        case 'lianhuan': (gens.lvbu || []).forEach(function (x) { x.bDmg += gb.dmg; }); break;
+        case 'huwei': mu.forEach(function (x) { if (x.gen !== 'caocao') x.bDmg += gb.dmg; }); break;
+        default:
+          mu.forEach(function (x) { if (gb.dmg) x.bDmg += gb.dmg; if (gb.spd) x.bSpd += gb.spd; });
+      }
+      side.bonds.push({ kind: 'gen', name: gb.name, desc: gb.desc, cells: mu.map(function (x) { return [x.x, x.y]; }) });
+    });
+    side.bondVer = side.boardVer;
+    side.bonds.forEach(function (b) {
+      if (!old[b.name]) { old[b.name] = 1; self.emit({ k: 'bond', side: side.idx, name: b.name, kind: b.kind, cells: b.cells }); }
+    });
+  };
+
+  // ───────────────────────── 锦囊 ─────────────────────────
+  B.canUseCard = function (side, i) {
+    var c = side.cards[i];
+    if (!c || c.used || this.state !== 'run') return false;
+    if (c.id === 'kurou' && side.hearts <= 1) return false;
+    return true;
+  };
+
+  B.useCard = function (side, i) {
+    if (!this.canUseCard(side, i)) return false;
+    var c = side.cards[i], self = this, en = side.enemies.filter(function (e) { return !e.dead; });
+    var other = this.solo ? null : this.sides[1 - side.idx];
+    switch (c.id) {
+      case 'kongcheng':
+        en.forEach(function (e) { if (e.boss) { if (e.boss !== 'lvbu') self.slow(e, 0.5, 5); } else e.stunT = Math.max(e.stunT, 5); });
+        break;
+      case 'huogong':
+        var t = this.fireDur(side, 6);
+        this.zones.push({ side: side.idx, kind: 'lanefire', t: t, max: t, dps: this.hpScale(Math.max(1, this.wave)) * 0.2 });
+        break;
+      case 'caochuan':
+        side.units.forEach(function (u) {
+          var bow = (u.kind === 'soldier' && u.key === 'gong') || ((u.kind === 'general' || u.kind === 'part') && G.GEN[u.gen].type === 0);
+          if (bow) u.buffs.push({ m: 1, t: 10 });
+        });
+        side.buns += 20; side.bunsEarned += 20;
+        break;
+      case 'kurou':
+        side.hearts = Math.max(1, side.hearts - 1);
+        side.buns += 80; side.bunsEarned += 80;
+        side.dmgBuffs.push({ m: 0.4, t: 15 });
+        break;
+      case 'jiedao':
+        var victims = en.filter(function (e) { return !e.boss; }).sort(function (a, b) { return b.hp - a.hp; }).slice(0, 4);
+        victims.forEach(function (e) {
+          if (other) {
+            side.enemies.splice(side.enemies.indexOf(e), 1);
+            e.side = other.idx; e.dist = 0; e.hitBy = {}; e.born = self.t;
+            var p = self.lanes[other.idx].pos(0, e.lat); e.x = p.x; e.y = p.y;
+            other.enemies.push(e);
+          } else self.hurt(side, e, e.hp + 1, null, { pierceArmor: true });
+        });
+        break;
+      case 'diaohu':
+        en.sort(function (a, b) { return b.dist - a.dist; }).slice(0, 3).forEach(function (e) { e.dist = 0; e.hitBy = {}; });
+        break;
+      case 'lianhuan':
+        side.linkT = 10;
+        break;
+      case 'andu':
+        for (var k = 0; k < 5; k++) {
+          var it = this.drawItem(side);
+          if (it.kind === 'soldier' || it.kind === 'farmer') it.lvl = 2;
+          side.camp[k] = it;
+        }
+        break;
+    }
+    c.used = true;
+    this.emit({ k: 'card', side: side.idx, id: c.id, name: G.CARD[c.id].name });
+    return true;
   };
 })(typeof window !== 'undefined' ? window : globalThis);

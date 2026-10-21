@@ -73,7 +73,9 @@
       camp: [0, 1, 2, 3, 4].map(function (i) { return { x: 100 + i * 92, y: cy, w: 86, h: 86 }; }),
       recruit: { x: 190, y: this.BTN_Y, w: 260, h: 100 },
       bar: [{ x: 20, y: this.BTN_Y + 10, w: 78, h: 80 }, { x: 104, y: this.BTN_Y + 10, w: 78, h: 80 }],
-      help: { x: 556, y: this.BTN_Y + 14, w: 70, h: 70 }
+      cards: [{ x: 462, y: this.BTN_Y + 4, w: 80, h: 92 }, { x: 550, y: this.BTN_Y + 4, w: 80, h: 92 }],
+      help: { x: 98, y: this.top + 26, w: 54, h: 54 },
+      wave: { x: 236, y: this.top + 70, w: 168, h: 66 }
     };
   };
 
@@ -329,9 +331,18 @@
     dtReal = Math.min(0.1, dtReal);
     this.time += dtReal;
     var b = this.b;
+    // 长按：显示说明，不触发选中
+    var dg = this.drag;
+    if (dg && dg.from && !dg.active && !dg.long && this.time - this.downT > 0.45) {
+      dg.long = true;
+      this.showTipFor(dg.from);
+      G.haptic(10);
+    }
+    var frozen = this.tutFrozen();
     if (!this.paused) {
       var step = 1 / 60;
       this.acc += dtReal * this.speed;
+      if (frozen) this.acc = 0;
       var n = 0;
       while (this.acc >= step && n < 10) {
         this.acc -= step; n++;
@@ -384,7 +395,9 @@
   };
   V.banner = function (txt, sub, o) {
     o = o || {};
-    this.banners.push({ txt: txt, sub: sub || '', t: 0, max: o.max || 1.8, color: o.color || '#1d1a17', boss: !!o.boss, side: o.side });
+    if (o.side === 1) this.banners = this.banners.filter(function (b) { return b.side !== 1; });
+    else this.banners = this.banners.filter(function (b) { return b.side === 1; });
+    this.banners.push({ txt: txt, sub: sub || '', t: 0, max: o.max || 1.8, color: o.color || '#1d1a17', boss: !!o.boss, side: o.side, event: !!o.event });
   };
 
   // ───────────────────────── 战斗事件 → 特效与音效 ─────────────────────────
@@ -408,11 +421,32 @@
           }
           break;
         case 'recruit': if (mine) A.play('recruit'); break;
+        case 'bond':
+          var bc = e.cells[0], bcc = this.cellCenter(bc[0], bc[1]);
+          if (e.kind === 'gen') {
+            if (mine) { A.play('unlock'); G.haptic([20, 40, 20]); }
+            this.text(e.name + '！', 320, this.MAP_Y + (e.side === 0 ? 560 : 240), '#b3261e', mine ? 46 : 34, { pop: true, max: 1.8, vy: -16 });
+          } else {
+            if (mine) A.play('skill');
+            this.text(e.name, bcc.x, bcc.y - 46, e.kind === 'form' ? '#b3261e' : '#2f74c0', 30, { pop: true, max: 1.2 });
+          }
+          break;
+        case 'card':
+          var cd = G.CARD[e.id];
+          if (mine) { A.play('boss'); G.haptic(30); this.banner(cd.name, cd.desc, { max: 2.2, color: '#9e1b16' }); }
+          else { A.play('skill'); this.banner('对手：' + cd.name, cd.desc, { max: 2, side: 1 }); }
+          this.cardFx(e);
+          break;
+        case 'event':
+          var ev = G.EVENT[e.id];
+          A.play('wave');
+          this.banner(ev.name, ev.desc, { max: 2.6, event: true });
+          break;
         case 'act':
           if (!mine) { if (e.kind === 'form' || e.kind === 'genup') this.burst(this.cellCenter(e.x, e.y), '#e0a100', 10); break; }
           var cc = this.cellCenter(e.x, e.y);
-          if (e.kind === 'merge') { A.play('merge'); this.burst(cc, '#e0a100', 14); this.text('升级!', cc.x, cc.y - 30, '#b3261e', 30, { pop: true }); }
-          else if (e.kind === 'form') { A.play('general'); this.burst(cc, '#e0a100', 22); this.text('武将登场!', cc.x, cc.y - 34, '#b3261e', 32, { pop: true, max: 1.3 }); }
+          if (e.kind === 'merge') { A.play('merge'); G.haptic(12); this.burst(cc, '#e0a100', 14); this.text('升级!', cc.x, cc.y - 30, '#b3261e', 30, { pop: true }); }
+          else if (e.kind === 'form') { A.play('general'); G.haptic([25, 30, 25]); this.burst(cc, '#e0a100', 22); this.text('武将登场!', cc.x, cc.y - 34, '#b3261e', 32, { pop: true, max: 1.3 }); }
           else if (e.kind === 'genup' || e.kind === 'genmerge') { A.play('merge'); this.burst(cc, '#e0a100', 16); this.text('武将升级!', cc.x, cc.y - 30, '#b3261e', 30, { pop: true }); }
           else if (e.kind === 'prop') {
             if (e.prop === 'shovel') { A.play('shovel'); this.dust(cc); }
@@ -437,7 +471,7 @@
           A.play(mine ? 'leak' : 'coin');
           this.adou[e.side].shake = 0.6;
           this.say(e.side, G.ADOU_LINES.hurt, true);
-          if (mine) this.flashRed = 0.6;
+          if (mine) { this.flashRed = 0.6; G.haptic([60, 40, 60]); }
           break;
         case 'danger': this.say(e.side, G.ADOU_LINES.danger); break;
         case 'slash': if (mine) A.play('slash'); this.add({ type: 'slash', x: P.x, y: P.y, fx: e.fx * CELL, fy: this.MAP_Y + e.fy * CELL, max: 0.22, big: e.big || e.gen, small: e.small }); break;
@@ -511,23 +545,26 @@
     x.setTransform(1, 0, 0, 1, 0, 0);
     x.drawImage(this.staticCv, 0, 0);
     x.setTransform(k, 0, 0, k, this.ox * this.dpr, this.oy * this.dpr);
-    if (b.mode === 'endless') {
+    if (b.solo) {
       x.fillStyle = 'rgba(40,32,26,0.28)';
       x.fillRect(0, this.MAP_Y, DW, 400);
-      this.drawGlyph('无尽守城', 64, 'rgba(255,248,235,0.75)', 320, this.MAP_Y + 170);
-      if (this.o.best) this.drawGlyph('最佳 · 第' + G.cnNum(this.o.best) + '波', 30, 'rgba(255,248,235,0.7)', 320, this.MAP_Y + 240);
+      this.drawGlyph(this.o.soloTitle || '无尽守城', 60, 'rgba(255,248,235,0.78)', 320, this.MAP_Y + 160);
+      if (this.o.soloSub) this.drawGlyph(this.o.soloSub, 28, 'rgba(255,248,235,0.72)', 320, this.MAP_Y + 228);
     }
     this.drawSpawnArrows();
     this.drawZones();
     this.drawMines();
     this.drawHighlights();
+    this.drawBonds();
     this.drawSnakes();
     for (var s = 0; s < b.lanes.length; s++) this.drawAdou(s);
     this.drawUnits();
     this.drawEnemies();
+    this.drawBondLabels();
     this.drawProjectiles();
     this.drawSweeps();
     this.drawParts();
+    this.drawWeather();
     this.drawRangeRing();
     this.drawHUD();
     this.drawBottom();
@@ -548,7 +585,7 @@
   V.drawSpawnArrows = function () {
     var x = this.ctx, b = this.b;
     for (var s = 0; s < b.lanes.length; s++) {
-      if (b.mode === 'endless' && s === 1) continue;
+      if (b.solo && s === 1) continue;
       var L = b.lanes[s], p0 = L.pts[0], p1 = L.pts[1];
       var dx = Math.sign(p1.x - p0.x), dy = Math.sign(p1.y - p0.y);
       for (var i = 0; i < 3; i++) {
@@ -576,6 +613,14 @@
         }
         x.fillStyle = 'rgba(220,80,20,' + 0.18 * a + ')';
         x.beginPath(); x.ellipse(P.x, P.y, z.r * CELL, z.r * CELL * 0.7, 0, 0, Math.PI * 2); x.fill();
+      } else if (z.kind === 'lanefire') {
+        var L = b.lanes[z.side];
+        for (var d = 0.3; d < L.len; d += 0.55) {
+          var q = L.pos(d), Q = this.posOf(q.x, q.y);
+          var fl2 = 18 + 10 * Math.sin(this.time * 11 + d * 3);
+          x.fillStyle = 'rgba(235,' + Math.round(100 + 60 * Math.sin(d * 5)) + ',30,' + (0.6 * a) + ')';
+          x.beginPath(); x.moveTo(Q.x - 14, Q.y + 14); x.quadraticCurveTo(Q.x + Math.sin(this.time * 7 + d) * 6, Q.y - fl2 * 1.6, Q.x + 14, Q.y + 14); x.fill();
+        }
       } else if (z.kind === 'cloud') {
         x.fillStyle = 'rgba(30,30,35,' + 0.45 * a + ')';
         for (j = 0; j < 5; j++) {
@@ -618,7 +663,7 @@
 
   V.drawAdou = function (s) {
     var b = this.b, x = this.ctx;
-    if (b.mode === 'endless' && s === 1) return;
+    if (b.solo && s === 1) return;
     var L = b.lanes[s], end = L.pts[L.pts.length - 1];
     var side = b.sides[s];
     var P = this.posOf(end.x, end.y);
@@ -858,6 +903,10 @@
             drawStar(x, P.x + Math.cos(a) * 16, by - 8 + Math.sin(a) * 4, 5, '#e0a100');
           }
         }
+        if (e.armorT > 0) {
+          x.strokeStyle = '#6a6a7a'; x.lineWidth = 3;
+          x.beginPath(); x.moveTo(P.x - 20, by - 4); x.lineTo(P.x - 12, by - 8); x.lineTo(P.x - 4, by - 4); x.lineTo(P.x - 6, by + 6); x.lineTo(P.x - 12, by + 10); x.lineTo(P.x - 18, by + 6); x.closePath(); x.stroke();
+        }
         if (e.markT > 0) {
           x.fillStyle = 'rgba(240,220,120,0.85)';
           x.beginPath(); x.arc(P.x + 20, by - 6, 7, 0.4, Math.PI * 1.6 + 0.4); x.arc(P.x + 23, by - 8, 6, Math.PI * 1.6 + 0.4, 0.4, true); x.fill();
@@ -867,7 +916,24 @@
     }
   };
 
+  V.drawLinks = function () {
+    var x = this.ctx, b = this.b;
+    for (var s = 0; s < b.sides.length; s++) {
+      var side = b.sides[s];
+      if (!(side.linkT > 0)) continue;
+      var en = side.enemies.filter(function (e) { return !e.dead; });
+      x.strokeStyle = 'rgba(90,90,110,0.55)'; x.lineWidth = 3; x.setLineDash([6, 5]);
+      x.beginPath();
+      for (var i = 1; i < en.length; i++) {
+        var a = this.posOf(en[i - 1].x, en[i - 1].y), c = this.posOf(en[i].x, en[i].y);
+        x.moveTo(a.x, a.y); x.lineTo(c.x, c.y);
+      }
+      x.stroke(); x.setLineDash([]);
+    }
+  };
+
   V.drawProjectiles = function () {
+    this.drawLinks();
     var x = this.ctx, b = this.b;
     for (var i = 0; i < b.projs.length; i++) {
       var p = b.projs[i];
@@ -1047,17 +1113,30 @@
     x.beginPath(); x.moveTo(40, by); x.quadraticCurveTo(140, by - 12, 230, by + 4); x.quadraticCurveTo(240, by + 20, 230, by + 36); x.quadraticCurveTo(140, by + 46, 40, by + 38); x.closePath(); x.fill();
     drawBun(x, 52, by + 18, 22);
     this.num(String(Math.floor(side.buns)), 28, '#f3d27a', 132, by + 19);
+    // 帮助
+    var Hp = this.R.help;
+    x.fillStyle = 'rgba(60,55,50,0.8)';
+    x.beginPath(); x.arc(Hp.x + Hp.w / 2, Hp.y + Hp.h / 2, 24, 0, Math.PI * 2); x.fill();
+    this.drawGlyph('?', 28, '#fff', Hp.x + Hp.w / 2, Hp.y + Hp.h / 2, { font: 'sans', bold: true });
     // 地图名与波次
     this.drawGlyph(b.map.name, 44, '#3a2a20', 320, T + 46, { stroke: '#f4ecdc', sw: 3 });
-    var wtxt = (b.mode === 'endless' ? '无尽 · ' : '') + '第' + G.cnNum(Math.max(1, b.wave)) + '波';
+    var wtxt = (b.mode === 'endless' ? '无尽 · ' : '') + '第' + G.cnNum(Math.max(1, b.wave)) + '波' + (b.targetWaves ? ' / ' + G.cnNum(b.targetWaves) : '');
     this.drawGlyph(wtxt, 32, '#fff', 320, T + 96, { stroke: '#2b2622', sw: 5 });
+    // 天气
+    var wd = G.WEATHER[b.weather];
+    if (wd && wd.id !== 'clear') {
+      var wx = 320 + this.glyph(b.map.name, 44, '#3a2a20', { stroke: '#f4ecdc', sw: 3 }).w / 2 + 20;
+      x.fillStyle = { fog: '#8a8f96', wind: '#4f8fb0', rain: '#3d6a9a', night: '#2a3460', heat: '#c8662a' }[wd.id] || '#666';
+      x.beginPath(); x.arc(wx, T + 46, 20, 0, Math.PI * 2); x.fill();
+      this.drawGlyph(wd.ch, 24, '#fff', wx, T + 46);
+    }
     if (b.state === 'run') {
       var left = Math.max(0, b.waveDur - b.waveT);
       x.fillStyle = 'rgba(43,38,34,0.25)'; x.fillRect(260, T + 126, 120, 5);
       x.fillStyle = '#b3261e'; x.fillRect(260, T + 126, 120 * (1 - left / b.waveDur), 5);
     }
     // 对手
-    if (b.mode !== 'endless' && b.sides[1]) {
+    if (!b.solo && b.sides[1]) {
       var o = b.sides[1];
       x.fillStyle = 'rgba(40,60,110,0.85)';
       roundRect(x, 436, T + 92, 190, 44, 10); x.fill();
@@ -1071,7 +1150,7 @@
     roundRect(x, S.x, S.y, S.w, S.h, 12); x.fill();
     this.drawGlyph('×' + this.speed, 26, '#fff', S.x + S.w / 2, S.y + S.h / 2, { font: 'sans', bold: true });
     // 开场倒计时
-    if (b.state === 'intro') {
+    if (b.state === 'intro' && !this.tutStep()) {
       var n = Math.ceil(b.introT);
       var fr = b.introT - Math.floor(b.introT);
       if (n !== this.lastCount) { this.lastCount = n; G.Audio.play('countdown'); }
@@ -1163,11 +1242,28 @@
       roundRect(x, rb.x, rb.y, rb.w, rb.h, 8); x.fill(); x.stroke();
       this.itemGlyph(itb, rb.x + rb.w / 2, rb.y + rb.h / 2 - 4, 40, this.drag && this.drag.active && this.drag.from.bar === i ? 0.25 : 1);
     }
-    // 帮助
-    var H = this.R.help;
-    x.fillStyle = 'rgba(60,55,50,0.8)';
-    x.beginPath(); x.arc(H.x + H.w / 2, H.y + H.h / 2, 30, 0, Math.PI * 2); x.fill();
-    this.drawGlyph('?', 36, '#fff', H.x + H.w / 2, H.y + H.h / 2, { font: 'sans', bold: true });
+    // 锦囊
+    for (i = 0; i < 2; i++) {
+      var rc = this.R.cards[i], cd = side.cards[i];
+      if (!cd) continue;
+      var def = G.CARD[cd.id];
+      var armed = this.cardArm === i && this.time - this.cardArmT < 3 && !cd.used;
+      var cx2 = rc.x + rc.w / 2;
+      x.save();
+      if (armed) { x.shadowColor = '#ffcf3f'; x.shadowBlur = 18; }
+      // 锦囊袋
+      x.fillStyle = cd.used ? '#8a827a' : '#b3261e';
+      x.beginPath();
+      x.moveTo(rc.x + 10, rc.y + 24); x.quadraticCurveTo(rc.x + 2, rc.y + rc.h - 4, cx2, rc.y + rc.h);
+      x.quadraticCurveTo(rc.x + rc.w - 2, rc.y + rc.h - 4, rc.x + rc.w - 10, rc.y + 24); x.closePath(); x.fill();
+      x.fillStyle = cd.used ? '#a8a098' : '#d4663f';
+      x.beginPath(); x.moveTo(rc.x + 14, rc.y + 24); x.lineTo(cx2 - 8, rc.y + 6); x.lineTo(cx2 + 8, rc.y + 6); x.lineTo(rc.x + rc.w - 14, rc.y + 24); x.closePath(); x.fill();
+      x.restore();
+      x.fillStyle = cd.used ? '#c8c0b8' : '#e0a100';
+      x.fillRect(cx2 - 18, rc.y + 22, 36, 6);
+      this.drawGlyph(def.ch, 36, cd.used ? '#d8d0c8' : '#fff4d6', cx2, rc.y + 54);
+      this.drawGlyph(cd.used ? '已用' : (armed ? '再点' : def.name), 15, '#fff', cx2, rc.y + rc.h + 12, { font: 'sans', bold: true, stroke: '#3a2a20', sw: 3 });
+    }
   };
 
   V.campCanMerge = function (it) {
@@ -1243,9 +1339,9 @@
     for (var i = 0; i < this.banners.length; i++) {
       var bn = this.banners[i], k = bn.t / bn.max;
       var a = k < 0.15 ? k / 0.15 : (k > 0.8 ? (1 - k) / 0.2 : 1);
-      var cy = this.MAP_Y + 400;
+      var cy = this.MAP_Y + (bn.side === 1 ? 200 : 400);
       x.globalAlpha = a;
-      x.fillStyle = bn.boss ? 'rgba(90,10,8,0.85)' : 'rgba(30,25,20,0.78)';
+      x.fillStyle = bn.boss ? 'rgba(90,10,8,0.85)' : (bn.event ? 'rgba(110,74,16,0.85)' : (bn.side === 1 ? 'rgba(30,45,90,0.8)' : 'rgba(30,25,20,0.78)'));
       var w = 640 * Math.min(1, k / 0.15);
       x.beginPath();
       x.moveTo(320 - w / 2, cy - 54); x.quadraticCurveTo(320, cy - 66, 320 + w / 2, cy - 50);
@@ -1258,40 +1354,95 @@
   };
 
   // 新手提示
-  V.drawHints = function () {
-    var b = this.b;
-    if (!this.o.tutorial || b.state === 'over') return;
-    var side = b.sides[0];
-    var hint = null, arrow = null;
-    var campItems = side.camp.filter(Boolean);
-    var pairOnBoard = b.mergePairs(side).length > 0;
-    if (!side.units.length && !campItems.length) { hint = '点击下方红色按钮，征召士兵'; arrow = this.R.recruit; }
-    else if (side.units.length < 3 && campItems.length) { hint = '把营里的字拖到白色营地上，排兵布阵'; arrow = 'drag'; }
-    else if (pairOnBoard && !this.hintDone.merge) { hint = '两个相同的字叠在一起，就能合成升级！'; }
-    else if (side.units.some(function (u) { return u.kind === 'part'; }) && !side.units.some(function (u) { return u.kind === 'general'; })) { hint = '把“赵”“云”拼在一起，召唤武将赵云！'; }
-    else if (b.wave <= 2 && !this.hintDone.adou) { hint = '贼兵走到阿斗跟前，阿斗就会掉一颗心'; }
-    else if (b.wave >= 3 && b.wave <= 4 && !this.hintDone.recycle) { hint = '把没用的兵拖回“营”可以换回馒头'; }
-    if (pairOnBoard && b.sides[0].units.some(function (u) { return u.lvl >= 2; })) this.hintDone.merge = true;
-    if (b.wave >= 3) this.hintDone.adou = true;
-    if (!hint) return;
-    var y = this.MAP_Y + 330;
-    var a = 0.85 + 0.15 * Math.sin(this.time * 4);
-    this.ctx.globalAlpha = a;
-    this.drawGlyph(hint, 28, '#ffcf3f', 320, y, { font: 'sans', bold: true, stroke: '#5a2a10', sw: 5 });
-    this.ctx.globalAlpha = 1;
-    var x = this.ctx;
-    if (arrow === 'drag') {
-      var from = this.R.camp[side.camp.findIndex(function (c) { return c; })];
-      var cells = b.emptyCells(side);
-      if (from && cells.length) {
-        var to = this.cellCenter(cells[0].x, cells[0].y);
-        var k = (this.time % 1.6) / 1.6;
-        var hx = G.lerp(from.x + 43, to.x, G.easeInOut(k)), hy = G.lerp(from.y + 43, to.y, G.easeInOut(k));
-        drawHand(x, hx + 10, hy + 20);
-      }
-    } else if (arrow) {
-      drawHand(x, arrow.x + arrow.w + 18, arrow.y + 56 + Math.sin(this.time * 6) * 8);
+  // ───────────────────────── 新手教学（分步，未完成前贼兵不出发） ─────────────────────────
+  V.tutCell = function (kind) {
+    var b = this.b, side = b.sides[0], lane = b.lanes[0];
+    var cells = b.emptyCells(side);
+    if (!cells.length) return null;
+    var dist = function (c) {
+      var best = 9;
+      for (var i = 0; i < lane.cells.length; i++) { var lc = lane.cells[i]; best = Math.min(best, Math.abs(lc[0] - c.x) + Math.abs(lc[1] - c.y)); }
+      return best;
+    };
+    cells.sort(function (a, c) { return kind === 'back' ? dist(c) - dist(a) : dist(a) - dist(c); });
+    return [cells[0].x, cells[0].y];
+  };
+
+  V.tutStep = function () {
+    if (!this.o.tutorial || this.tutReady) return null;
+    var b = this.b, side = b.sides[0], camp = side.camp, units = side.units;
+    var ci = function (pred) { for (var i = 0; i < 5; i++) if (camp[i] && pred(camp[i])) return i; return -1; };
+    if (side.recruits === 0 && !units.length && camp.every(function (c) { return !c; })) return { k: 'btn', rect: this.R.recruit, text: '第一步：点「征兵」，招来五个兵' };
+    var dao = units.filter(function (u) { return u.kind === 'soldier' && u.key === 'dao'; });
+    var iDao = ci(function (c) { return c.kind === 'soldier' && c.key === 'dao'; });
+    if (!dao.length && iDao >= 0) return { k: 'drag', from: iDao, to: this.tutCell('front'), text: '把「刀」拖到挨着路的白色营地上' };
+    if (iDao >= 0 && dao.length && !units.some(function (u) { return u.key === 'dao' && u.lvl >= 2; })) return { k: 'drag', from: iDao, to: [dao[0].x, dao[0].y], text: '两个相同的字叠在一起：合成 2 级刀兵' };
+    var iGong = ci(function (c) { return c.kind === 'soldier' && c.key === 'gong'; });
+    if (iGong >= 0) return { k: 'drag', from: iGong, to: this.tutCell('back'), text: '「弓」射得远，放在后排也打得到' };
+    var iPart = ci(function (c) { return c.kind === 'part'; });
+    var parts = units.filter(function (u) { return u.kind === 'part'; });
+    if (iPart >= 0 && !units.some(function (u) { return u.kind === 'general'; })) {
+      if (!parts.length) return { k: 'drag', from: iPart, to: this.tutCell('front'), text: '这是武将名字里的字，先放上营地' };
+      return { k: 'drag', from: iPart, to: [parts[0].x, parts[0].y], text: '把「赵」「云」拼在一起，召唤常山赵子龙！' };
     }
+    return { k: 'go', text: '布阵完毕！点一下开战，别让贼兵碰到阿斗' };
+  };
+  V.tutFrozen = function () { return !!this.tutStep(); };
+
+  V.drawHints = function () {
+    var b = this.b, x = this.ctx;
+    if (b.state === 'over') return;
+    var st = this.tutStep();
+    if (st) {
+      // 聚光：压暗其余部分
+      var holes = [];
+      if (st.k === 'btn') holes.push(st.rect);
+      if (st.k === 'drag') {
+        holes.push(this.R.camp[st.from]);
+        if (st.to) { var tc = this.cellCenter(st.to[0], st.to[1]); holes.push({ x: tc.x - 42, y: tc.y - 42, w: 84, h: 84 }); }
+      }
+      x.save();
+      x.beginPath();
+      x.rect(-this.ox / this.s, 0, DW + 2 * this.ox / this.s, this.DH);
+      holes.forEach(function (r) { x.rect(r.x + r.w, r.y, -r.w, r.h); });
+      x.fillStyle = 'rgba(15,10,5,' + (st.k === 'go' ? 0.35 : 0.5) + ')';
+      x.fill('evenodd');
+      holes.forEach(function (r) {
+        x.strokeStyle = 'rgba(255,207,63,' + (0.6 + 0.4 * Math.sin(this.time * 6)) + ')'; x.lineWidth = 4;
+        roundRect(x, r.x - 3, r.y - 3, r.w + 6, r.h + 6, 10); x.stroke();
+      }, this);
+      x.restore();
+      var ty = this.MAP_Y + 330;
+      x.fillStyle = 'rgba(40,25,10,0.88)';
+      roundRect(x, 28, ty - 32, 584, 64, 14); x.fill();
+      this.drawGlyph(st.text, 28, '#ffcf3f', 320, ty, { font: 'sans', bold: true });
+      if (st.k === 'btn') drawHand(x, st.rect.x + st.rect.w + 18, st.rect.y + 56 + Math.sin(this.time * 6) * 8);
+      if (st.k === 'drag' && st.to) {
+        var from = this.R.camp[st.from], to = this.cellCenter(st.to[0], st.to[1]);
+        var k = (this.time % 1.6) / 1.6;
+        drawHand(x, G.lerp(from.x + 43, to.x, G.easeInOut(k)) + 10, G.lerp(from.y + 43, to.y, G.easeInOut(k)) + 20);
+      }
+      if (st.k === 'go') {
+        var pulse = 1 + 0.05 * Math.sin(this.time * 5);
+        x.fillStyle = '#b3261e';
+        roundRect(x, 200, this.MAP_Y + 400, 240, 90, 18); x.fill();
+        this.drawGlyph('开 战', 50, '#fff', 320, this.MAP_Y + 445, { scale: pulse });
+      }
+      return;
+    }
+    if (!this.o.tutorial) return;
+    // 开战后的提示
+    var side = b.sides[0], hint = null;
+    if (b.mergePairs(side).length && !this.hintDone.merge) hint = '场上有能合成的一对，叠在一起！';
+    else if (b.wave === 2) hint = '贼兵走到阿斗跟前，阿斗就会掉一颗心';
+    else if (b.wave === 3 && side.cards.some(function (c) { return !c.used; })) hint = '右下角是锦囊：点一下看说明，再点一下发动';
+    else if (b.wave === 4) hint = '相邻的字能连成词：刀挨着枪、弓挨着骑都有加成';
+    else if (b.wave === 5) hint = '把没用的兵拖回「营」能换回馒头';
+    if (side.units.some(function (u) { return u.lvl >= 2 && u.kind === 'soldier'; }) && b.wave >= 2) this.hintDone.merge = true;
+    if (!hint) return;
+    x.globalAlpha = 0.85 + 0.15 * Math.sin(this.time * 4);
+    this.drawGlyph(hint, 26, '#ffcf3f', 320, this.MAP_Y + 330, { font: 'sans', bold: true, stroke: '#5a2a10', sw: 5 });
+    x.globalAlpha = 1;
   };
 
   function drawHand(x, cx, cy) {
@@ -1335,6 +1486,8 @@
     if (this.paused) return;
     G.Audio.init();
     var p = this.evPoint(e), b = this.b, R = this.R;
+    var ts = this.tutStep();
+    if (ts && ts.k === 'go') { this.tutReady = true; G.Audio.play('go'); return; }
     this.downP = p; this.downT = this.time;
     this.touch = e.pointerType === 'touch' || e.pointerType === 'pen';
     try { this.cv.setPointerCapture(e.pointerId); } catch (er) { /* */ }
@@ -1342,6 +1495,8 @@
     if (inR(p, R.speed)) { this.pressBtn = 'speed'; return; }
     if (inR(p, R.recruit)) { this.pressBtn = 'recruit'; return; }
     if (inR(p, R.help)) { this.pressBtn = 'help'; return; }
+    if (inR(p, R.wave)) { this.pressBtn = 'wave'; return; }
+    for (var ci = 0; ci < 2; ci++) if (inR(p, R.cards[ci]) && b.sides[0].cards[ci]) { this.pressBtn = 'card' + ci; return; }
     var side = b.sides[0];
     for (var i = 0; i < 5; i++) if (inR(p, R.camp[i]) && side.camp[i]) { this.startDrag({ camp: i }, p); return; }
     for (i = 0; i < 2; i++) if (inR(p, R.bar[i]) && side.bar[i]) { this.startDrag({ bar: i }, p); return; }
@@ -1385,11 +1540,14 @@
       else if (btn === 'speed' && inR(p, R.speed)) { this.speed = this.speed === 1 ? 2 : 1; G.Audio.play('click'); if (this.o.onSpeed) this.o.onSpeed(this.speed); }
       else if (btn === 'recruit' && inR(p, R.recruit)) this.doRecruit();
       else if (btn === 'help' && inR(p, R.help)) { G.Audio.play('click'); if (this.o.onHelp) { this.setPaused(true); this.o.onHelp(); } }
+      else if (btn === 'wave' && inR(p, R.wave)) { G.Audio.play('tap'); this.showWaveTip(); }
+      else if (btn.slice(0, 4) === 'card') { var ci = +btn.slice(4); if (inR(p, R.cards[ci])) this.tapCard(ci); }
       return;
     }
     var d = this.drag;
     this.drag = null;
     if (!d) return;
+    if (d.long && !d.active) return;
     if (d.active) {
       var res = null;
       if (d.overYing && d.from.cell) res = b.act(b.sides[0], d.from, { dismiss: true });
@@ -1473,10 +1631,160 @@
     if (k === ' ' || k === 'r' || k === 'R') { if (!this.paused) { this.doRecruit(); e.preventDefault(); } }
     else if (k === 'Escape' || k === 'p' || k === 'P') { if (!this.paused) { this.setPaused(true); if (this.o.onPause) this.o.onPause(); } }
     else if (k === 'f' || k === 'F') { this.speed = this.speed === 1 ? 2 : 1; }
+    else if (k === 'q' || k === 'Q') { this.tapCard(0, true); }
+    else if (k === 'e' || k === 'E') { this.tapCard(1, true); }
     else if (k >= '1' && k <= '5') {
       var i = +k - 1;
       if (this.b.sides[0].camp[i]) { this.sel = { from: { camp: i } }; this.showTipFor(this.sel.from); }
     }
+  };
+
+  V.tapCard = function (i, direct) {
+    var b = this.b, side = b.sides[0], c = side.cards[i];
+    if (!c) return;
+    var def = G.CARD[c.id];
+    if (c.used) { this.tip(def.name + '（已用）', def.desc); return; }
+    if (direct || (this.cardArm === i && this.time - this.cardArmT < 3)) {
+      this.cardArm = null; this.hideTip();
+      if (!b.useCard(side, i)) { G.Audio.play('error'); this.text(b.state !== 'run' ? '开战后才能用' : '现在用不了', this.R.cards[i].x + 40, this.R.cards[i].y - 16, '#b3261e', 22, { font: 'sans' }); }
+      return;
+    }
+    this.cardArm = i; this.cardArmT = this.time;
+    G.Audio.play('tap');
+    this.tip('锦囊 · ' + def.name, def.desc + '<br><b>再点一次发动</b>（每局只能用一次）');
+  };
+
+  V.showWaveTip = function () {
+    var b = this.b, info = b.nextWaveInfo(), w = G.WEATHER[b.weather] || G.WEATHER.clear;
+    var html = '';
+    if (info) {
+      var parts = Object.keys(info.counts).map(function (k) { return G.ENEMIES[k].ch + '×' + info.counts[k]; });
+      html += '下一波（第' + G.cnNum(info.n) + '波）：' + (parts.join('、') || '—');
+      if (info.boss) html += '<br><b style="color:#9e1b16">Boss：' + G.BOSSES[info.boss].name + '</b> — ' + G.BOSSES[info.boss].desc;
+    } else html += '这是最后一波，清完就过关！';
+    html += '<br>天气：' + w.name + ' — ' + w.desc;
+    var bonds = b.sides[0].bonds;
+    if (bonds.length) {
+      var cnt = {};
+      bonds.forEach(function (x) { cnt[x.name] = (cnt[x.name] || 0) + 1; });
+      html += '<br>我方羁绊：' + Object.keys(cnt).map(function (k) { return k + (cnt[k] > 1 ? '×' + cnt[k] : ''); }).join('、');
+    } else html += '<br>我方羁绊：暂无（相邻的字连成词、刘关张同场等都会触发）';
+    this.tip('敌情', html);
+  };
+
+  V.cardFx = function (e) {
+    var b = this.b, mid = e.side === 0 ? this.MAP_Y + 600 : this.MAP_Y + 200;
+    switch (e.id) {
+      case 'kongcheng': this.text('空', 320, mid, 'rgba(60,60,80,0.8)', 160, { pop: true, max: 1.6, vy: -10 }); break;
+      case 'huogong': this.add({ type: 'flash', side: e.side, max: 0.5, color: 'rgba(240,120,30,0.35)' }); break;
+      case 'caochuan':
+        for (var i = 0; i < 24; i++) this.add({ type: 'spark', x: 40 + Math.random() * 560, y: mid - 300, vx: 0.0001, vy: 600 + Math.random() * 200, max: 0.5, color: '#4a4038' });
+        this.text('借箭!', 320, mid, '#2f74c0', 50, { pop: true, max: 1.2 });
+        break;
+      case 'kurou': this.adou[e.side].shake = 0.8; break;
+      case 'jiedao': this.add({ type: 'flash', side: 1 - e.side, max: 0.4, color: 'rgba(180,40,30,0.3)' }); this.text('借刀!', 320, e.side === 0 ? this.MAP_Y + 200 : this.MAP_Y + 600, '#b3261e', 48, { pop: true, max: 1.2 }); break;
+      case 'diaohu': var L = b.lanes[e.side], p0 = L.pts[0]; this.dust(this.posOf(p0.x, p0.y)); this.text('调虎离山', 320, mid, '#7a4a1a', 44, { pop: true, max: 1.2 }); break;
+      case 'lianhuan': this.text('连环', 320, mid, '#5a5a6a', 50, { pop: true, max: 1.2 }); break;
+      case 'andu': if (e.side === 0) this.burst({ x: 330, y: this.CAMP_Y + 40 }, '#e0a100', 16); break;
+    }
+  };
+
+  V.drawBonds = function () {
+    var x = this.ctx, b = this.b, self = this;
+    for (var s = 0; s < b.sides.length; s++) {
+      var bonds = b.sides[s].bonds;
+      if (!bonds.length) continue;
+      x.globalAlpha = s === 0 ? 1 : 0.55;
+      for (var i = 0; i < bonds.length; i++) {
+        var bd = bonds[i];
+        var cs = bd.cells.map(function (c) { return self.cellCenter(c[0], c[1]); });
+        if (bd.kind === 'word') {
+          x.strokeStyle = 'rgba(47,116,192,0.35)'; x.lineWidth = 20; x.lineCap = 'round';
+          x.beginPath(); x.moveTo(cs[0].x, cs[0].y); x.lineTo(cs[1].x, cs[1].y); x.stroke();
+        } else if (bd.kind === 'form') {
+          x.strokeStyle = 'rgba(179,38,30,0.55)'; x.lineWidth = 3; x.setLineDash([8, 6]);
+          cs.forEach(function (c) { roundRect(x, c.x - 38, c.y - 38, 76, 76, 10); x.stroke(); });
+          x.setLineDash([]);
+        } else {
+          x.strokeStyle = 'rgba(224,161,0,' + (0.45 + 0.2 * Math.sin(this.time * 3)) + ')'; x.lineWidth = 6; x.lineCap = 'round';
+          x.beginPath();
+          cs.forEach(function (c, j) { if (j) x.lineTo(c.x, c.y); else x.moveTo(c.x, c.y); });
+          x.stroke();
+        }
+      }
+      x.globalAlpha = 1;
+    }
+  };
+
+  // 羁绊名称贴在单位上层
+  V.drawBondLabels = function () {
+    var x = this.ctx, b = this.b, self = this;
+    for (var s = 0; s < b.sides.length; s++) {
+      var bonds = b.sides[s].bonds, seen = {};
+      x.globalAlpha = s === 0 ? 1 : 0.6;
+      for (var i = 0; i < bonds.length; i++) {
+        var bd = bonds[i];
+        var cs = bd.cells.map(function (c) { return self.cellCenter(c[0], c[1]); });
+        var lx, ly, col;
+        if (bd.kind === 'word') { lx = (cs[0].x + cs[1].x) / 2; ly = (cs[0].y + cs[1].y) / 2 + (cs[0].y === cs[1].y ? 30 : 0); col = '#2f74c0'; }
+        else {
+          if (seen[bd.name]) continue; seen[bd.name] = 1;
+          var top = cs.reduce(function (a, c) { return c.y < a.y ? c : a; }, cs[0]);
+          lx = top.x; ly = top.y - 40; col = bd.kind === 'form' ? '#b3261e' : '#a06a00';
+        }
+        var g = this.glyph(bd.name, 17, '#fff', { font: 'sans', bold: true });
+        x.fillStyle = col;
+        roundRect(x, lx - g.w / 2 + 2, ly - 12, g.w - 4, 24, 12); x.fill();
+        x.drawImage(g.c, lx - g.w / 2, ly - g.h / 2, g.w, g.h);
+      }
+      x.globalAlpha = 1;
+    }
+  };
+
+  V.drawWeather = function () {
+    var w = this.b.weather;
+    if (!w || w === 'clear') return;
+    var x = this.ctx, t = this.time, MY = this.MAP_Y, i;
+    x.save();
+    x.beginPath(); x.rect(0, MY, DW, 800); x.clip();
+    if (w === 'fog') {
+      for (i = 0; i < 6; i++) {
+        var fx = ((i * 173 + t * (12 + i * 3)) % 900) - 130, fy = MY + 60 + i * 130;
+        var gr = x.createRadialGradient(fx, fy, 10, fx, fy, 220);
+        gr.addColorStop(0, 'rgba(250,248,240,0.38)'); gr.addColorStop(1, 'rgba(250,248,240,0)');
+        x.fillStyle = gr; x.fillRect(fx - 230, fy - 230, 460, 460);
+      }
+    } else if (w === 'rain') {
+      x.strokeStyle = 'rgba(110,140,180,0.45)'; x.lineWidth = 2;
+      x.beginPath();
+      for (i = 0; i < 70; i++) {
+        var rx = ((i * 97 + t * 90) % 720) - 40, ry = MY + ((i * 53 + t * 760) % 820);
+        x.moveTo(rx, ry); x.lineTo(rx - 7, ry + 22);
+      }
+      x.stroke();
+      x.fillStyle = 'rgba(60,80,110,0.08)'; x.fillRect(0, MY, DW, 800);
+    } else if (w === 'night') {
+      x.fillStyle = 'rgba(15,25,60,0.3)'; x.fillRect(0, MY, DW, 800);
+      var vg = x.createRadialGradient(320, MY + 400, 200, 320, MY + 400, 560);
+      vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(5,10,30,0.4)');
+      x.fillStyle = vg; x.fillRect(0, MY, DW, 800);
+    } else if (w === 'wind') {
+      x.strokeStyle = 'rgba(255,255,255,0.45)'; x.lineWidth = 2.5; x.lineCap = 'round';
+      for (i = 0; i < 9; i++) {
+        var wx = ((i * 211 + t * 260) % 900) - 120, wy = MY + 50 + ((i * 89) % 720);
+        x.beginPath(); x.moveTo(wx, wy); x.quadraticCurveTo(wx + 40, wy - 14, wx + 90, wy); x.quadraticCurveTo(wx + 120, wy + 8, wx + 140, wy - 4); x.stroke();
+      }
+    } else if (w === 'heat') {
+      x.fillStyle = 'rgba(255,150,40,0.08)'; x.fillRect(0, MY, DW, 800);
+      x.strokeStyle = 'rgba(255,200,120,0.25)'; x.lineWidth = 2;
+      for (i = 0; i < 6; i++) {
+        var hy = MY + ((i * 140 + t * 40) % 800);
+        x.beginPath();
+        for (var hx = 0; hx <= DW; hx += 20) x.lineTo(hx, hy + Math.sin(hx * 0.05 + t * 3 + i) * 4);
+        x.stroke();
+      }
+    }
+    x.restore();
   };
 
   V.doRecruit = function () {

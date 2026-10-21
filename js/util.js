@@ -31,6 +31,13 @@
     return rng;
   };
 
+  // 手机震动反馈（安卓浏览器支持；iOS 没有这个接口就什么也不做）
+  G.hapticOn = true;
+  G.haptic = function (pattern) {
+    if (!G.hapticOn) return;
+    try { if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(pattern); } catch (e) { /* 忽略 */ }
+  };
+
   G.clamp = function (v, a, b) { return v < a ? a : v > b ? b : v; };
   G.lerp = function (a, b, t) { return a + (b - a) * t; };
   G.dist = function (ax, ay, bx, by) { var dx = ax - bx, dy = ay - by; return Math.sqrt(dx * dx + dy * dy); };

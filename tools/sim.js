@@ -11,10 +11,10 @@ function play(seed, rankIdx, d0, d1, opts = {}) {
   const L1 = G.makeAILoadout(rankIdx, rng);
   const dm = [0.65, 0.8, 0.95, 1.05];
   const b = new G.Battle({
-    seed, mapId: opts.map != null ? opts.map : G.RANKS[rankIdx].map, rankIdx, mode: opts.mode || 'pvp', introT: 0.5, dmgNumbers: false,
+    seed, mapId: opts.map != null ? opts.map : G.RANKS[rankIdx].map, rankIdx, mode: opts.mode || 'pvp', introT: 0.5, dmgNumbers: false, weather: opts.weather || G.WEATHERS[seed % G.WEATHERS.length].id,
     sides: [
-      { name: 'P', isAI: true, difficulty: d0, deck: L0.deck, weapons: L0.weapons, dmgMult: opts.pm || 1 },
-      { name: 'AI', isAI: true, difficulty: d1, deck: L1.deck, weapons: L1.weapons, dmgMult: dm[d1] }
+      { name: 'P', isAI: true, difficulty: d0, deck: L0.deck, weapons: L0.weapons, cards: L0.cards, dmgMult: opts.pm || 1 },
+      { name: 'AI', isAI: true, difficulty: d1, deck: L1.deck, weapons: L1.weapons, cards: L1.cards, dmgMult: dm[d1] }
     ]
   });
   const ais = [new G.AI(b, 0, d0, seed + 11)];

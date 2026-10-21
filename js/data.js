@@ -5,7 +5,7 @@
   'use strict';
   var G = root.G = root.G || {};
 
-  G.VERSION = '1.0.0';
+  G.VERSION = '1.1.0';
 
   // ───────────────────────── 段位 ─────────────────────────
   // [名称, 胜利铜钱, 敌兵加血%, 对手兵器品质权重[5], 对手难度权重[4], 地图, 升段所需星]
@@ -100,8 +100,15 @@
       path: [[0, 5], [4, 5], [4, 7], [1, 7], [1, 9], [7, 9]],
       build: [[1, 6], [2, 6], [3, 6], [2, 8], [3, 8], [4, 8]],
       colors: { bg: '#efe2cf', grass: '#7ea5b6', grass2: '#6d94a6', road: '#b9906a', road2: '#a67d58', build: '#fbf8f1', wall: '#463a34', sky: '#f0d6bd' }
+    },
+    {
+      id: 4, name: '长坂坡', sub: '单骑救主', theme: 'slope',
+      path: [[0, 5], [6, 5], [6, 7], [1, 7], [1, 9], [7, 9]],
+      build: [[2, 6], [3, 6], [4, 6], [3, 8], [4, 8], [5, 8]],
+      colors: { bg: '#ede0c6', grass: '#a3b07a', grass2: '#8f9d68', road: '#c9a782', road2: '#b5926c', build: '#fbf8f1', wall: '#4e4232', sky: '#efd9b4' }
     }
   ];
+  G.LADDER_MAPS = 4; // 天梯只用前四张图
 
   // ───────────────────────── 兵种 ─────────────────────────
   // type: 0 弓 1 枪 2 刀 3 剑；骑兵 -1；农夫无攻击
@@ -235,7 +242,8 @@
     fei: { ch: '匪', name: '悍匪', hp: 2.6, spd: 0.68, bun: 2, desc: '皮糙肉厚，走得慢。' },
     dao: { ch: '盗', name: '飞盗', hp: 0.9, spd: 1.35, bun: 3, desc: '身上揣着馒头，打死掉 3 个。' },
     wu:  { ch: '巫', name: '妖巫', hp: 1.2, spd: 0.9, bun: 2, heal: 0.03, desc: '不停给身边的同伙回血，优先除掉。' },
-    jia: { ch: '甲', name: '甲士', hp: 1.6, spd: 0.85, bun: 2, armor: 0.4, desc: '身披重甲，伤害减免 40%，枪兵与武将的枪可以无视。' }
+    jia: { ch: '甲', name: '甲士', hp: 1.6, spd: 0.85, bun: 2, armor: 0.4, desc: '身披重甲，伤害减免 40%，枪兵与武将的枪可以无视。' },
+    jin: { ch: '巾', name: '黄巾', hp: 0.75, spd: 1.15, bun: 1, desc: '头裹黄巾的乱民，人多势众。' }
   };
   G.BOSSES = {
     huaxiong: { name: '华雄', hp: 16, spd: 0.55, desc: '每 6 秒斩将：把射程内最强的兵定身 3 秒。' },
@@ -244,7 +252,8 @@
     lvbu: { name: '吕布', hp: 22, spd: 0.6, desc: '无视晕眩与减速，每 6 秒策马冲出两格。' },
     shangxiang: { name: '孙尚香', hp: 20, spd: 0.6, desc: '每 5 秒放箭射晕一个兵 2 秒。击败可获得将魂。', drop: 'shangxiang' },
     zhenfu: { name: '甄宓', hp: 20, spd: 0.62, desc: '凌波微步，时不时隐去身形无法被选中。击败可获得将魂。', drop: 'zhenfu' },
-    diaochan: { name: '貂蝉', hp: 20, spd: 0.65, desc: '每 5 秒魅惑一个兵，使其 3 秒内无法出手。击败可获得将魂。', drop: 'diaochan' }
+    diaochan: { name: '貂蝉', hp: 20, spd: 0.65, desc: '每 5 秒魅惑一个兵，使其 3 秒内无法出手。击败可获得将魂。', drop: 'diaochan' },
+    caoren: { name: '曹仁', hp: 24, spd: 0.48, desc: '八门金锁阵：每 7 秒给身边的贼兵套上铁甲，伤害减半 4 秒。' }
   };
   G.BOSS_ORDER = ['huaxiong', 'zhangjiao', 'dongzhuo', 'lvbu'];
   G.SPECIAL_BOSSES = ['shangxiang', 'zhenfu', 'diaochan'];
@@ -273,6 +282,140 @@
     { id: 'small', name: '兵器匣', price: 300, draws: 3, boost: 0, desc: '3 块兵器碎片' },
     { id: 'big', name: '神兵宝箱', price: 1200, draws: 6, boost: 1.5, desc: '6 块碎片，高品质几率大增' }
   ];
+
+  // ───────────────────────── 字阵羁绊 ─────────────────────────
+  // 相邻两字（横读、竖读都算）连成词
+  G.WORD_BONDS = [
+    { a: 'dao', b: 'qiang', name: '刀枪', desc: '刀枪齐备：两者伤害 +20%', dmg: 0.2 },
+    { a: 'gong', b: 'qi', name: '弓骑', desc: '弓骑并进：两者攻速 +20%', spd: 0.2 },
+    { a: 'qiang', b: 'qi', name: '枪骑', desc: '长枪铁骑：骑兵每两击就冲锋一次，枪兵射程 +0.3', lancer: true },
+    { a: 'nong', b: '*', name: '屯田', desc: '兵农合一：农夫身边每多一个兵，产量 +25%', tuntian: true }
+  ];
+  G.FORMATIONS = [
+    { id: 'snake', name: '长蛇阵', desc: '三个以上同种兵连成一条直线：伤害 +25%', dmg: 0.25 },
+    { id: 'four', name: '四象阵', desc: '刀枪弓骑四种兵围成田字：伤害与攻速各 +20%', dmg: 0.2, spd: 0.2 }
+  ];
+  // 武将同时在场（不必相邻）
+  G.GEN_BONDS = [
+    { id: 'taoyuan', name: '桃园结义', gens: ['liubei', 'guanyu', 'zhangfei'], need: 3, desc: '刘关张同在：三人伤害 +35%', dmg: 0.35 },
+    { id: 'wuhu', name: '五虎上将', gens: ['guanyu', 'zhangfei', 'zhaoyun', 'machao', 'huangzhong'], need: 3, desc: '五虎到三位：在场的五虎攻速 +20%；五位齐聚 +45%', spd: 0.2, spd5: 0.45 },
+    { id: 'sangu', name: '三顾茅庐', gens: ['liubei', 'kongming'], need: 2, desc: '刘备与孔明：借东风冷却缩短到 9 秒，两人攻速 +15%', spd: 0.15 },
+    { id: 'lianhuan', name: '连环计', gens: ['lvbu', 'diaochan'], need: 2, desc: '吕布与貂蝉：吕布伤害 +50%，貂蝉魅惑几率翻倍', dmg: 0.5, only: 'lvbu' },
+    { id: 'huwei', name: '虎卫', gens: ['caocao', 'dianwei', 'xuchu'], need: 2, req: 'caocao', desc: '曹操带着典韦或许褚：护卫伤害 +30%，曹操减速光环加强到 40%', dmg: 0.3 },
+    { id: 'lianyin', name: '孙刘联姻', gens: ['shangxiang', 'liubei'], need: 2, desc: '尚香与刘备：两人攻速 +25%', spd: 0.25 },
+    { id: 'jisheng', name: '既生瑜', gens: ['zhouyu', 'kongming'], need: 2, desc: '周瑜与孔明：火焰持续时间翻倍，周瑜每两击就点火', dmg: 0.1 },
+    { id: 'tongque', name: '铜雀春深', gens: ['zhenfu', 'caocao'], need: 2, desc: '甄宓与曹操：凌波冷却缩短到 5 秒', dmg: 0.1 }
+  ];
+
+  // ───────────────────────── 天气与随机事件 ─────────────────────────
+  G.WEATHERS = [
+    { id: 'clear', name: '晴', ch: '晴', w: 3, desc: '风和日丽，没有特殊效果。' },
+    { id: 'fog', name: '大雾', ch: '雾', w: 2, desc: '大雾弥漫：所有兵射程 -20%。' },
+    { id: 'wind', name: '东风', ch: '风', w: 2, desc: '东风骤起：弓兵与弓类武将射程 +0.5，火焰持续时间翻倍。' },
+    { id: 'rain', name: '暴雨', ch: '雨', w: 2, desc: '大雨滂沱：贼兵移动速度 -15%，火焰持续时间减半。' },
+    { id: 'night', name: '夜袭', ch: '夜', w: 2, desc: '夜色掩护：每波贼兵多两成，但每打死一个多给 1 个馒头。' },
+    { id: 'heat', name: '酷暑', ch: '暑', w: 1, desc: '烈日当头：兵的攻速 -10%，农夫产量翻倍。' }
+  ];
+  G.WEATHER = {};
+  G.WEATHERS.forEach(function (w) { G.WEATHER[w.id] = w; });
+  G.EVENTS = [
+    { id: 'grain', name: '天降粮草', desc: '双方各得 30 个馒头。' },
+    { id: 'volunteer', name: '流民投军', desc: '双方各有一名 2 级兵自己站上空营地。' },
+    { id: 'plague', name: '疫病流行', desc: '场上所有贼兵失去三成血量。' },
+    { id: 'spy', name: '奸细作乱', desc: '双方各有两个兵被扰乱 4 秒。' },
+    { id: 'levy', name: '朝廷征兵', desc: '双方各免费征兵一次。' },
+    { id: 'cheer', name: '将士用命', desc: '双方全军攻速 +25%，持续 15 秒。' }
+  ];
+  G.EVENT = {};
+  G.EVENTS.forEach(function (e) { G.EVENT[e.id] = e; });
+
+  // ───────────────────────── 锦囊 ─────────────────────────
+  G.CARD_SLOTS = 2;
+  G.CARDS = [
+    { id: 'kongcheng', name: '空城计', ch: '空', unlock: { rank: 0 }, desc: '我方路上的敌人原地发呆 5 秒（Boss 只减速一半）。' },
+    { id: 'huogong', name: '火攻', ch: '火', unlock: { rank: 0 }, desc: '我方整条路燃起大火 6 秒，灼烧路上所有敌人。' },
+    { id: 'caochuan', name: '草船借箭', ch: '箭', unlock: { rank: 5 }, desc: '弓兵和弓类武将攻速翻倍 10 秒，再白得 20 个馒头。' },
+    { id: 'kurou', name: '苦肉计', ch: '苦', unlock: { camp: 'c2' }, desc: '阿斗掉一颗心（至少留一颗），换来 80 个馒头和全军伤害 +40%（15 秒）。' },
+    { id: 'jiedao', name: '借刀杀人', ch: '借', unlock: { rank: 15 }, desc: '把我方路上血最多的 4 个贼兵（不含 Boss）丢到对手路上；单人模式下直接消灭。' },
+    { id: 'diaohu', name: '调虎离山', ch: '调', unlock: { camp: 'c5' }, desc: '把我方路上走得最远的 3 个敌人（含 Boss）赶回起点。' },
+    { id: 'lianhuan', name: '连环计', ch: '环', unlock: { camp: 'c7' }, desc: '10 秒内，打在任一敌人身上的伤害，会有一成传给其他每个敌人（最多 8 个）。' },
+    { id: 'andu', name: '暗度陈仓', ch: '陈', unlock: { camp: 'c8' }, desc: '立刻免费征兵一次，这次的 5 个字都是 2 级。' }
+  ];
+  G.CARD = {};
+  G.CARDS.forEach(function (c) { G.CARD[c.id] = c; });
+
+  // ───────────────────────── 长坂坡战役 ─────────────────────────
+  // 单人闯关：守住 waves 波即过关。rules 覆盖默认设置。
+  G.CAMPAIGN = [
+    { id: 'c1', name: '桃园结义', map: 0, waves: 6, hp: 1.1,
+      story: '涿郡桃园，刘关张焚香结拜。黄巾贼已到城外，兄弟三人第一次并肩御敌。',
+      tip: '三兄弟同时在场会触发「桃园结义」，三人伤害大增。',
+      rules: { deck: ['liubei', 'guanyu', 'zhangfei'], buns: 30, weather: 'clear' },
+      reward: { gold: 200, frags: 2 } },
+    { id: 'c2', name: '黄巾之乱', map: 0, waves: 8, hp: 1.0,
+      story: '张角自称天公将军，三十六方同时起事。巨鹿城下，黄巾贼漫山遍野。',
+      tip: '黄巾跑得快、数量多，多放刀兵波及成群的敌人。',
+      rules: { mix: { jin: 8, zei: 2 }, bosses: { 8: 'zhangjiao' }, weather: 'clear' },
+      reward: { gold: 260, frags: 2, card: 'kurou' } },
+    { id: 'c3', name: '温酒斩华雄', map: 2, waves: 5, hp: 2.2,
+      story: '华雄连斩联军数将，关羽请战：「酒且斟下，某去便来。」',
+      tip: '只能召唤关羽。华雄会在第三波和第五波出现，阿斗只有两颗心。',
+      rules: { deck: ['guanyu'], hearts: 2, bosses: { 3: 'huaxiong', 5: 'huaxiong' } },
+      reward: { gold: 300, frags: 3 } },
+    { id: 'c4', name: '三英战吕布', map: 2, waves: 10, hp: 1.4,
+      story: '虎牢关前，吕布方天画戟所向无敌。刘关张三人联手，与他大战五十回合。',
+      tip: '吕布无视控制、还会冲锋。凑齐桃园结义，集中火力。',
+      rules: { deck: ['liubei', 'guanyu', 'zhangfei'], bosses: { 5: 'lvbu', 10: 'lvbu' }, bossHp: 1.4 },
+      reward: { gold: 360, frags: 3, souls: { lvbu: 3 } } },
+    { id: 'c5', name: '单骑救主', map: 4, waves: 10, hp: 1.3,
+      story: '长坂坡上曹军百万，赵子龙怀抱阿斗，七进七出，杀出重围。',
+      tip: '只有赵云出战，阿斗只剩一口气。七进七出的冷却缩短了。',
+      rules: { deck: ['zhaoyun'], hearts: 1, zyBoost: true, weather: 'clear' },
+      reward: { gold: 420, frags: 3, card: 'diaohu' } },
+    { id: 'c6', name: '当阳桥', map: 4, waves: 8, hp: 3.5,
+      story: '张飞据水断桥，横矛立马：「燕人张翼德在此，谁敢来决一死战！」',
+      tip: '只能召唤张飞。贼兵多出六成，但走得慢。',
+      rules: { deck: ['zhangfei'], countMult: 1.6, enemySpd: 0.85 },
+      reward: { gold: 420, frags: 3 } },
+    { id: 'c7', name: '草船借箭', map: 3, waves: 8, hp: 5,
+      story: '江上大雾，孔明扎草人于船上，擂鼓呐喊，一夜借得十万支箭。',
+      tip: '大雾天，只能招弓兵和农夫。孔明的连弩是主力。',
+      rules: { deck: ['kongming'], soldiers: ['gong', 'nong'], weather: 'fog' },
+      reward: { gold: 480, frags: 4, card: 'lianhuan' } },
+    { id: 'c8', name: '火烧赤壁', map: 3, waves: 12, hp: 2.8,
+      story: '曹军铁索连舟，东风一起，黄盖火船冲入，赤壁一片火海。',
+      tip: '东风天里火焰更持久。周瑜和孔明同在会触发「既生瑜」。',
+      rules: { deck: ['zhouyu', 'kongming', 'huangzhong'], weather: 'wind', bosses: { 6: 'caoren', 12: 'caoren' } },
+      reward: { gold: 560, frags: 4, card: 'andu' } },
+    { id: 'c9', name: '七进七出', map: 4, waves: 15, hp: 1.6,
+      story: '最后一战。带上你最强的武将与兵器，杀穿曹营，护送阿斗回到主公身边。',
+      tip: '用你自己的出战武将与兵器。每五波一个 Boss，越往后越强。',
+      rules: { bosses: { 5: 'huaxiong', 10: 'dongzhuo', 15: 'lvbu' }, bossHp: 1.3 },
+      reward: { gold: 900, frags: 6, souls: { lvbu: 2 } } }
+  ];
+  G.CAMP = {};
+  G.CAMPAIGN.forEach(function (c, i) { c.idx = i; G.CAMP[c.id] = c; });
+
+  // ───────────────────────── 每日挑战 ─────────────────────────
+  // 按北京时间的日期生成：所有人同一张图、同一套武将兵器、同一种天气
+  G.cnDay = function (t) { return new Date((t || Date.now()) + 8 * 3600 * 1000).toISOString().slice(0, 10); };
+  G.dailyConfig = function (day) {
+    var seed = 0;
+    for (var i = 0; i < day.length; i++) seed = (seed * 31 + day.charCodeAt(i)) >>> 0;
+    var rng = G.makeRng(seed ^ 0x5eed);
+    var gens = rng.shuffle(G.GENERALS.map(function (g) { return g.id; })).slice(0, 4);
+    var weapons = {};
+    gens.forEach(function (gid) {
+      var type = G.GEN[gid].type;
+      var rar = 2 + rng.int(3);
+      var cands = G.WEAPONS.filter(function (w) { return w.type === type && w.rarity === rar; });
+      if (!cands.length) cands = G.WEAPONS.filter(function (w) { return w.type === type; });
+      weapons[gid] = { id: rng.pick(cands).id, star: 3 };
+    });
+    var cards = rng.shuffle(G.CARDS.map(function (c) { return c.id; }).filter(function (id) { return id !== 'jiedao'; })).slice(0, 2);
+    var weather = G.WEATHERS[1 + rng.int(G.WEATHERS.length - 1)].id;
+    return { day: day, seed: seed, map: rng.int(5), deck: gens, weapons: weapons, cards: cards, weather: weather, rankIdx: 15 };
+  };
 
   // ───────────────────────── 阿斗语录 ─────────────────────────
   G.ADOU_LINES = {

@@ -69,6 +69,7 @@
     },
 
     setScreen: function (el, name) {
+      this.closeSidePanels();
       if (this.view) { this.view.destroy(); this.view = null; this.battle = null; }
       this.root.innerHTML = '';
       this.root.appendChild(el);
@@ -146,13 +147,18 @@
         h('div', { class: 'stage-deck' }, h('span', { class: 'lbl' }, '出战武将'), deckChars)
       );
       var startBtn = h('button', { class: 'btn big red start-btn', onclick: function () { A.play('click'); self.startMatch(); } }, '开始游戏');
-      var endless = h('button', { class: 'btn ghost', onclick: function () { A.play('click'); self.startEndless(); } },
-        '无尽守城', h('small', null, d.best ? ' 最佳 ' + d.best + ' 波' : ''));
+      var dailyNew = d.daily.rewarded !== G.cnDay();
+      var modes = h('div', { class: 'mode-row' },
+        h('button', { class: 'btn ghost mode', onclick: function () { A.play('click'); self.showCampaign(); } }, '战役', h('small', null, P.campStars() + '/' + G.CAMPAIGN.length * 3 + '★')),
+        h('button', { class: 'btn ghost mode', onclick: function () { A.play('click'); self.showDaily(); } }, '每日', h('small', null, dailyNew ? '新题' : '已挑战'), dailyNew ? h('i', { class: 'dot' }) : null),
+        h('button', { class: 'btn ghost mode', onclick: function () { A.play('click'); self.startEndless(); } }, '无尽', h('small', null, d.best ? '最佳' + d.best + '波' : '')));
+      var endless = modes;
       var supplies = P.activeSupplies(), supNames = G.SUPPLIES.filter(function (s) { return supplies[s.id]; }).map(function (s) { return s.name; });
       var supLine = supNames.length ? h('div', { class: 'sup-line' }, '本局军需：' + supNames.join('、')) : null;
       var nav = h('div', { class: 'nav' },
         navBtn('将', '武将', function () { self.showGenerals(); }, P.data.unlockedGens.length > 1 && !P.data.seenGens),
         navBtn('兵', '兵器', function () { self.showWeapons(); }, G.WEAPONS.some(function (w) { return P.canUnlock(w.id) || P.canUpgrade(w.id); })),
+        navBtn('囊', '锦囊', function () { self.showCards(); }, G.CARDS.some(function (c) { return P.cardUnlocked(c.id) && !(d.seenCards || {})[c.id]; })),
         navBtn('军', '军需', function () { self.showShop(); }),
         navBtn('段', '段位', function () { self.showRanks(); })
       );
@@ -184,6 +190,10 @@
     },
 
     // ───────────────── 匹配 → 战斗 ─────────────────
+    randomWeather: function () {
+      return G.WEATHERS[this.rng.weighted(G.WEATHERS.map(function (w) { return w.w; }))].id;
+    },
+
     startMatch: function (o) {
       o = o || {};
       var self = this, d = P.data;
@@ -196,7 +206,9 @@
       if (d.streak >= 4) diff = Math.min(3, diff + 1);
       if (tutorial || (d.wins + d.losses < 2)) diff = 0;
       var aiLoad = G.makeAILoadout(rankIdx, this.rng);
-      if (tutorial) aiLoad.weapons = {};
+      if (tutorial) { aiLoad.weapons = {}; aiLoad.cards = []; }
+      var weather = (tutorial || d.wins + d.losses < 3) ? 'clear' : this.randomWeather();
+      var wd = G.WEATHER[weather];
       var oppName = this.rng.pick(G.AI_NAMES);
       var oppRankIdx = G.clamp(rankIdx + this.rng.int(3) - 1, 0, G.RANKS.length - 1);
       var winRate = (30 + diff * 9 + this.rng() * 18).toFixed(1);
@@ -212,44 +224,65 @@
           h('div', { class: 'flag-info' }, h('div', { class: 'flag-name' }, d.name || '常山赵子龙'), h('div', null, rankLabel(rank)), h('div', { class: 'flag-rate' }, '胜率 ' + myRate + '%')),
           h('div', { class: 'flag-av' }, '我')
         ),
-        h('div', { class: 'match-map' }, '战场 · ' + G.MAPS[rank.map].name + ' — ' + G.MAPS[rank.map].sub)
+        h('div', { class: 'match-map' }, '战场 · ' + G.MAPS[rank.map].name + ' — ' + G.MAPS[rank.map].sub,
+          weather !== 'clear' ? h('div', { class: 'match-weather' }, '天气：' + wd.name + ' — ' + wd.desc) : null)
       );
       this.setScreen(el, 'match');
       A.music(null);
       A.play('recruit');
-      var t1 = setTimeout(function () { var mt = $('.match-title', el); if (mt) { mt.textContent = '匹配完成'; mt.classList.add('done'); } A.play('boss'); }, 1200);
-      var t2 = setTimeout(function () {
+      var go = function () {
         if (self.screen !== 'match') return;
         self.startBattle({
-          mode: 'pvp', mapId: rank.map, rankIdx: rankIdx, tutorial: tutorial,
-          ai: { difficulty: diff, deck: aiLoad.deck, weapons: aiLoad.weapons, name: oppName },
+          mode: 'pvp', mapId: rank.map, rankIdx: rankIdx, tutorial: tutorial, weather: weather,
+          ai: { difficulty: diff, deck: aiLoad.deck, weapons: aiLoad.weapons, cards: aiLoad.cards, name: oppName },
           ranked: !tutorial
         });
-      }, 2600);
-      el.addEventListener('click', function () { clearTimeout(t1); clearTimeout(t2); }, { once: true });
-      el.addEventListener('click', function () {
-        if (self.screen !== 'match') return;
-        self.startBattle({ mode: 'pvp', mapId: rank.map, rankIdx: rankIdx, tutorial: tutorial, ai: { difficulty: diff, deck: aiLoad.deck, weapons: aiLoad.weapons, name: oppName }, ranked: !tutorial });
-      }, { once: true });
+      };
+      var t1 = setTimeout(function () { var mt = $('.match-title', el); if (mt) { mt.textContent = '匹配完成'; mt.classList.add('done'); } A.play('boss'); }, 1200);
+      var t2 = setTimeout(go, 2800);
+      el.addEventListener('click', function () { clearTimeout(t1); clearTimeout(t2); go(); }, { once: true });
     },
 
     startEndless: function () {
       var rankIdx = P.rankIdx();
-      this.startBattle({ mode: 'endless', mapId: this.rng.int(4), rankIdx: Math.min(rankIdx, 10) });
+      this.startBattle({ mode: 'endless', mapId: this.rng.int(G.LADDER_MAPS), rankIdx: Math.min(rankIdx, 10), weather: this.randomWeather(),
+        soloTitle: '无尽守城', soloSub: P.data.best ? '最佳 · 第' + G.cnNum(P.data.best) + '波' : '' });
+    },
+
+    startCampaign: function (lv) {
+      var d = P.data, deck = lv.rules.deck;
+      var o = { mode: 'campaign', mapId: lv.map, rankIdx: 0, waves: lv.waves, hpMult: lv.hp, rules: lv.rules, weather: lv.rules.weather || this.randomWeather(),
+        campaign: lv, events: false, soloTitle: lv.name, soloSub: '守住 ' + lv.waves + ' 波' };
+      if (deck) {
+        var weapons = {};
+        deck.forEach(function (gid) {
+          var wid = d.equip[gid];
+          if (wid != null && d.weapons[wid] && d.weapons[wid].star > 0) weapons[gid] = { id: wid, star: d.weapons[wid].star };
+        });
+        o.deck = deck; o.weapons = weapons;
+      }
+      this.startBattle(o);
+    },
+
+    startDaily: function () {
+      var cfg = G.dailyConfig(G.cnDay());
+      this.startBattle({ mode: 'daily', mapId: cfg.map, rankIdx: cfg.rankIdx, weather: cfg.weather, deck: cfg.deck, weapons: cfg.weapons, cards: cfg.cards,
+        seed: cfg.seed, daily: cfg, noSupplies: true, soloTitle: '每日挑战', soloSub: cfg.day.slice(5).replace('-', '月') + '日' });
     },
 
     startBattle: function (o) {
       var self = this, d = P.data;
       var load = P.loadout();
-      var sup = P.activeSupplies();
+      var sup = o.noSupplies ? {} : P.activeSupplies();
       var dm = [0.72, 0.85, 0.96, 1.05];
       var cfg = {
-        seed: (Date.now() ^ (this.rng() * 1e9)) >>> 0,
+        seed: o.seed != null ? o.seed : (Date.now() ^ (this.rng() * 1e9)) >>> 0,
         mode: o.mode, mapId: o.mapId, rankIdx: o.rankIdx, tutorial: !!o.tutorial,
+        weather: o.weather || 'clear', waves: o.waves, hpMult: o.hpMult, rules: o.rules, events: o.events,
         dmgNumbers: d.settings.dmg,
         sides: [
-          { name: d.name || '我', deck: load.deck, weapons: load.weapons, supplies: sup },
-          o.ai ? { name: o.ai.name, isAI: true, difficulty: o.ai.difficulty, deck: o.ai.deck, weapons: o.ai.weapons, dmgMult: dm[o.ai.difficulty] * (o.tutorial ? 0.8 : 1) } : null
+          { name: d.name || '我', deck: o.deck || load.deck, weapons: o.weapons || load.weapons, supplies: sup, cards: o.cards || P.activeCards() },
+          o.ai ? { name: o.ai.name, isAI: true, difficulty: o.ai.difficulty, deck: o.ai.deck, weapons: o.ai.weapons, cards: o.ai.cards, dmgMult: dm[o.ai.difficulty] * (o.tutorial ? 0.8 : 1) } : null
         ]
       };
       var b = new G.Battle(cfg);
@@ -262,7 +295,8 @@
       var ais = o.ai ? [new G.AI(b, 1, o.ai.difficulty, cfg.seed + 99)] : [];
       if (/autoplay/.test(location.search)) ais.push(new G.AI(b, 0, 3, cfg.seed + 7)); // 调试：让 AI 替我方下棋
       this.view = new G.BattleView(cv, b, {
-        ais: ais, tipEl: tip, settings: d.settings, tutorial: !!o.tutorial, oppName: o.ai ? o.ai.name : '', best: d.best,
+        ais: ais, tipEl: tip, settings: d.settings, tutorial: !!o.tutorial, oppName: o.ai ? o.ai.name : '',
+        soloTitle: o.soloTitle, soloSub: o.soloSub,
         onPause: function () { self.showPause(); },
         onHelp: function () { self.showHelp(function () { if (self.view) self.view.setPaused(false); }); },
         onSpeed: function (s) { d.settings.speed = s; P.save(); },
@@ -270,6 +304,7 @@
       });
       A.music('battle');
       this.loop();
+      this.openSidePanels();
       tip.addEventListener('click', function () { tip.classList.remove('show'); });
     },
 
@@ -285,26 +320,88 @@
       this._raf = requestAnimationFrame(tick);
     },
 
+    // ───────────────── 宽屏两侧信息栏 ─────────────────
+    openSidePanels: function () {
+      this.closeSidePanels();
+      var self = this;
+      var L = h('aside', { class: 'side-panel left' }), R = h('aside', { class: 'side-panel right' });
+      document.body.appendChild(L); document.body.appendChild(R);
+      this.panels = [L, R];
+      var render = function () {
+        if (!self.battle || !self.panels) return;
+        var b = self.battle, o = self.battleOpts || {};
+        // 左：对手（单人模式显示关卡信息）
+        var lh = '';
+        if (!b.solo && b.sides[1]) {
+          var s1 = b.sides[1];
+          lh += '<h3>对手 · ' + esc(o.ai ? o.ai.name : '') + '</h3>';
+          lh += '<div class="sp-row">心 ' + '♥'.repeat(Math.max(0, s1.hearts)) + '<span class="sp-dim">' + '♥'.repeat(Math.max(0, s1.maxHearts - s1.hearts)) + '</span> · 击杀 ' + s1.kills + ' · 馒头 ' + Math.floor(s1.buns) + '</div>';
+          lh += '<h4>阵容</h4><div class="sp-units">' + unitsHtml(s1.units) + '</div>';
+          lh += '<h4>锦囊</h4><div>' + (s1.cards.length ? s1.cards.map(function (c) { return '<span class="sp-card' + (c.used ? ' used' : '') + '">' + G.CARD[c.id].name + '</span>'; }).join('') : '—') + '</div>';
+          lh += '<h4>羁绊</h4><div>' + bondsHtml(s1.bonds) + '</div>';
+        } else {
+          lh += '<h3>' + esc(o.soloTitle || '') + '</h3>';
+          if (o.campaign) lh += '<p class="sp-story">' + esc(o.campaign.story) + '</p><p class="sp-tip">' + esc(o.campaign.tip) + '</p>';
+          if (o.daily) lh += '<p class="sp-tip">所有人今天打的都是同一局。坚持的波数越多、杀敌越多，分数越高。</p>';
+          if (b.mode === 'endless') lh += '<p class="sp-tip">一个人守到撑不住为止。</p>';
+        }
+        // 右：敌情与我方
+        var info = b.nextWaveInfo(), w = G.WEATHER[b.weather];
+        var rh = '<h3>敌情</h3>';
+        rh += '<div class="sp-row">第' + G.cnNum(Math.max(1, b.wave)) + '波 · 场上 ' + b.sides[0].enemies.length + ' 敌</div>';
+        if (info) {
+          rh += '<h4>下一波</h4><div class="sp-units">' + Object.keys(info.counts).map(function (k) { return '<span class="sp-u">' + G.ENEMIES[k].ch + '<small>×' + info.counts[k] + '</small></span>'; }).join('') + '</div>';
+          if (info.boss) rh += '<div class="sp-boss"><b>Boss：' + G.BOSSES[info.boss].name + '</b><br>' + G.BOSSES[info.boss].desc + '</div>';
+        }
+        rh += '<h4>天气 · ' + w.name + '</h4><div class="sp-dim2">' + w.desc + '</div>';
+        rh += '<h4>我方羁绊</h4><div>' + bondsHtml(b.sides[0].bonds) + '</div>';
+        if (L.innerHTML !== lh) L.innerHTML = lh;
+        if (R.innerHTML !== rh) R.innerHTML = rh;
+      };
+      render();
+      this._panelT = setInterval(render, 600);
+      function esc(t) { return String(t || '').replace(/[<>&]/g, ''); }
+      function unitsHtml(us) {
+        if (!us.length) return '<span class="sp-dim2">还没布阵</span>';
+        return us.slice().sort(function (a, b) { return (b.kind === 'general') - (a.kind === 'general') || b.lvl - a.lvl; }).map(function (u) {
+          var ch = u.kind === 'general' ? G.GEN[u.gen].name : (u.kind === 'part' ? G.GEN[u.gen].parts[u.part] : (u.kind === 'farmer' ? '农' : G.SOLDIERS[u.key].ch));
+          return '<span class="sp-u' + (u.kind === 'general' ? ' gen' : '') + '">' + ch + '<small>' + (u.kind === 'general' ? u.lvl + '★' : (u.kind === 'part' ? '' : u.lvl)) + '</small></span>';
+        }).join('');
+      }
+      function bondsHtml(bs) {
+        if (!bs.length) return '<span class="sp-dim2">暂无</span>';
+        var seen = {};
+        return bs.filter(function (x) { if (seen[x.name]) { seen[x.name]++; return false; } seen[x.name] = 1; return true; })
+          .map(function (x) { return '<div class="sp-bond ' + x.kind + '"><b>' + x.name + (seen[x.name] > 1 ? ' ×' + seen[x.name] : '') + '</b> ' + x.desc.replace(/^[^：]*：/, '') + '</div>'; }).join('');
+      }
+    },
+    closeSidePanels: function () {
+      clearInterval(this._panelT);
+      (this.panels || []).forEach(function (p) { p.remove(); });
+      this.panels = null;
+    },
+
     showPause: function () {
       var self = this;
       var s = P.data.settings;
       var body = h('div', { class: 'pause-body' },
         volRow('音乐', 'music'), volRow('音效', 'sfx'),
-        h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: s.dmg ? 'checked' : null, onchange: function (e) { s.dmg = e.target.checked; P.save(); if (self.view) self.view.dmgNumbers = s.dmg; } }), ' 显示伤害数字')
+        h('label', { class: 'chk' }, h('input', { type: 'checkbox', id: 'opt-dmg-p', checked: s.dmg ? 'checked' : null, onchange: function (e) { s.dmg = e.target.checked; P.save(); if (self.view) self.view.dmgNumbers = s.dmg; } }), ' 显示伤害数字')
       );
       function volRow(label, key) {
         return h('div', { class: 'vol-row' }, h('span', null, label), h('input', { type: 'range', min: 0, max: 1, step: 0.05, value: s[key], oninput: function (e) { s[key] = +e.target.value; A.setVolumes(s.music, s.sfx); P.save(); } }));
       }
       var keepPaused = false;
+      var solo = self.battle && self.battle.solo;
       var m = this.modal('暂停', body, [
         { text: '继续作战', cls: 'red', fn: function () { if (self.view) self.view.setPaused(false); } },
-        { text: self.battle && self.battle.mode === 'endless' ? '结束本局' : '认输', cls: 'ghost', fn: function (close) {
+        { text: solo ? '结束本局' : '认输', cls: 'ghost', fn: function (close) {
           keepPaused = true;
           close();
           if (!self.battle) return true;
-          self.confirm(self.battle.mode === 'endless' ? '结束本局并结算？' : '认输会算作一场败仗，确定吗？', function () {
+          self.confirm(solo ? '结束本局并结算？' : '认输会算作一场败仗，确定吗？', function () {
             if (self.view) self.view.setPaused(false);
-            if (self.battle.mode === 'endless') self.battle.sides[0].hearts = 0;
+            if (self.battle.solo) self.battle.sides[0].hearts = 0;
             else self.battle.end(1);
           }, function () { if (self.view) self.view.setPaused(false); });
           return true;
@@ -324,28 +421,59 @@
     // ───────────────── 结算 ─────────────────
     endBattle: function (sum) {
       var self = this, o = this.battleOpts || {}, b = this.battle;
-      var res;
-      if (b.mode === 'endless') res = P.applyEndless(sum, this.rng);
-      else if (o.tutorial) {
+      var res, title, win = null, rows = [], again, againText = '再来一局';
+      this.closeSidePanels();
+      A.music(null);
+      if (b.mode === 'campaign') {
+        res = P.applyCampaign(o.campaign, sum, this.rng);
+        win = res.win;
+        title = win ? '过关' : '败走';
+        rows.push(h('div', { class: 'res-rank' }, o.campaign.name, h('div', { class: 'stars', html: starsHtml(res.stars, 3) })));
+        if (win && res.first) rows.push(h('div', { class: 'res-up' }, '首次通关！'));
+        if (res.card) rows.push(h('div', { class: 'res-up' }, '获得锦囊：' + G.CARD[res.card].name));
+        again = function () { self.startCampaign(o.campaign); };
+        againText = win ? '再打一次' : '重新挑战';
+        var nextLv = G.CAMPAIGN[o.campaign.idx + 1];
+        if (win && nextLv) { var nl = nextLv; this._next = function () { self.campDetail(nl.idx); }; }
+      } else if (b.mode === 'daily') {
+        res = P.applyDaily(o.daily.day, sum, this.rng);
+        title = '挑战结束';
+        rows.push(h('div', { class: 'res-big' }, G.fmt(sum.score) + ' 分' + (res.best ? '（今日最佳）' : '')));
+        rows.push(h('div', { class: 'res-line' }, '今日最佳 ' + G.fmt(P.data.daily.best) + ' 分 · 今天第 ' + P.data.daily.plays + ' 次'));
+        var boardLine = h('div', { class: 'res-line board-line' }, '正在上传成绩…');
+        rows.push(boardLine);
+        G.Board.submit({ name: P.data.name || '常山赵子龙', score: sum.score, wave: sum.wave, day: o.daily.day, pid: P.data.pid }).then(function (r) {
+          if (!r) boardLine.textContent = '排行榜还没开通（成绩只保存在本机）';
+          else boardLine.textContent = '今日排名：' + (r.today ? '第 ' + r.today + ' 名' : '未进前 100') + ' · 总榜：' + (r.all ? '第 ' + r.all + ' 名' : '未进前 100');
+        });
+        again = function () { self.startDaily(); };
+        againText = '再挑战';
+      } else if (b.mode === 'endless') {
+        res = P.applyEndless(sum, this.rng);
+        title = '守城结束';
+        rows.push(h('div', { class: 'res-big' }, '坚守到第 ' + sum.wave + ' 波' + (res.best ? '（新纪录！）' : '')));
+        again = function () { self.startEndless(); };
+        againText = '再守一次';
+      } else if (o.tutorial) {
         P.data.tutorialDone = true;
         res = { win: sum.winner === 0, gold: 100, frags: [], souls: [], newGens: [], starDelta: 0, tutorial: true };
         P.data.gold += 100; P.save();
-      } else res = P.applyResult(sum.winner === 0, sum, this.rng);
-      A.music(null);
-      var win = b.mode === 'endless' ? null : sum.winner === 0;
-      var title = b.mode === 'endless' ? '守城结束' : (win ? '大获全胜' : '惜败');
-      var rows = [];
-      if (b.mode === 'endless') {
-        rows.push(h('div', { class: 'res-big' }, '坚守到第 ' + sum.wave + ' 波' + (res.best ? '（新纪录！）' : '')));
-      } else if (!res.tutorial) {
+        win = res.win;
+        title = win ? '大获全胜' : '惜败';
+        again = function () { self.startMatch(); };
+      } else {
+        res = P.applyResult(sum.winner === 0, sum, this.rng);
+        win = res.win;
+        title = win ? '大获全胜' : '惜败';
         var rk = G.RANKS[res.newRank];
         var line = res.starDelta > 0 ? '★ +' + res.starDelta + (res.starDelta > 1 ? '（连胜奖励）' : '') : (res.starDelta < 0 ? '★ -1' : (res.protect ? '段位保护，不掉星' : ''));
         rows.push(h('div', { class: 'res-rank' }, rankLabel(rk), h('div', { class: 'stars', html: rk.tier === '大帝' ? '<i class="star on">★</i> × ' + P.subStars() : starsHtml(P.subStars(), rk.stars) }), h('div', { class: 'res-delta ' + (res.starDelta > 0 ? 'up' : 'down') }, line)));
         if (res.newRank > res.oldRank) rows.push(h('div', { class: 'res-up' }, '晋升！' + rankLabel(rk)));
+        again = function () { self.startMatch(); };
       }
       rows.push(h('div', { class: 'res-line' }, '击杀 ' + sum.kills + ' · 第 ' + sum.wave + ' 波 · 用时 ' + Math.floor(sum.time / 60) + '分' + Math.floor(sum.time % 60) + '秒'));
       var rew = h('div', { class: 'rewards' });
-      rew.appendChild(h('div', { class: 'rw gold' }, h('i', { class: 'coin' }, '刀'), '+' + res.gold));
+      if (res.gold) rew.appendChild(h('div', { class: 'rw gold' }, h('i', { class: 'coin' }, '刀'), '+' + res.gold));
       (res.frags || []).forEach(function (id) { var w = G.WEAPON[id]; rew.appendChild(h('div', { class: 'rw frag', style: 'border-color:' + G.RARITY_COLOR[w.rarity] + ';color:' + G.RARITY_COLOR[w.rarity] }, w.name + ' 碎片')); });
       (res.souls || []).forEach(function (gid) { rew.appendChild(h('div', { class: 'rw soul' }, G.GEN[gid].name + ' 将魂 ' + (P.data.souls[gid] || 0) + '/' + G.GEN[gid].unlock.frag)); });
       rows.push(rew);
@@ -357,15 +485,121 @@
           return h('div', { class: 'mvp-row' }, h('span', { class: 'mvp-name' }, name), h('span', { class: 'mvp-bar' }, h('i', { style: 'width:' + Math.round(u.dmgDone / maxD * 100) + '%' })), h('span', { class: 'mvp-n' }, G.fmt(u.dmgDone)));
         })));
       }
+      var btns = [h('button', { class: 'btn red', onclick: function () { A.play('click'); again(); } }, againText)];
+      if (b.mode === 'campaign' && this._next && win) {
+        var nx = this._next; this._next = null;
+        btns.unshift(h('button', { class: 'btn red', onclick: function () { A.play('click'); self.showCampaign(); nx(); } }, '下一关'));
+        btns[1].className = 'btn ghost';
+      }
+      btns.push(h('button', { class: 'btn ghost', onclick: function () { A.play('click'); if (b.mode === 'campaign') self.showCampaign(); else if (b.mode === 'daily') self.showDaily(); else self.showHome(); } }, b.mode === 'campaign' ? '返回战役' : (b.mode === 'daily' ? '看排行' : '返回主城')));
       var box = h('div', { class: 'result ' + (win === false ? 'lose' : 'win') },
         h('div', { class: 'res-title' }, title), rows,
-        h('div', { class: 'modal-btns' },
-          h('button', { class: 'btn red', onclick: function () { A.play('click'); if (b.mode === 'endless') self.startEndless(); else self.startMatch(); } }, b.mode === 'endless' ? '再守一次' : '再来一局'),
-          h('button', { class: 'btn ghost', onclick: function () { A.play('click'); self.showHome(); } }, '返回主城'))
+        h('div', { class: 'modal-btns' }, btns)
       );
       var wrap = h('div', { class: 'modal-wrap result-wrap' }, box);
       this.root.appendChild(wrap);
       if (res.newGens && res.newGens.length) setTimeout(function () { self.announceGenerals(res.newGens); }, 600);
+    },
+
+    // ───────────────── 锦囊 ─────────────────
+    showCards: function () {
+      var self = this, d = P.data;
+      d.seenCards = d.seenCards || {};
+      G.CARDS.forEach(function (c) { if (P.cardUnlocked(c.id)) d.seenCards[c.id] = 1; });
+      P.save();
+      var list = h('div', { class: 'card-list' }, G.CARDS.map(function (c) {
+        var un = P.cardUnlocked(c.id), on = d.cards.indexOf(c.id) >= 0 && un;
+        var lock = c.unlock.rank != null ? '达到「' + rankLabel(G.RANKS[c.unlock.rank]) + '」解锁' : '通关战役「' + G.CAMP[c.unlock.camp].name + '」解锁';
+        return h('div', { class: 'card-item' + (un ? '' : ' locked') + (on ? ' on' : ''), onclick: function () {
+          if (!un) { self.toast(lock); return; }
+          A.play('click'); P.toggleCard(c.id); self.showCards();
+        } },
+          h('div', { class: 'ci-pouch' }, c.ch),
+          h('div', { class: 'ci-main' }, h('b', null, c.name), h('div', { class: 'ci-desc' }, c.desc), un ? null : h('div', { class: 'ci-lock' }, lock)),
+          on ? h('i', { class: 'deck-badge' }, '携带') : null);
+      }));
+      var el = this.page('锦囊', h('div', null,
+        h('div', { class: 'page-tip' }, '每局带 ' + G.CARD_SLOTS + ' 个锦囊，战斗中各能发动一次（点一下看说明，再点一下发动；电脑上按 Q / E）。点卡片选择携带，已选 ' + P.activeCards().length + ' / ' + G.CARD_SLOTS + '。'),
+        list));
+      this.setScreen(el, 'cards');
+    },
+
+    // ───────────────── 长坂坡战役 ─────────────────
+    showCampaign: function () {
+      var self = this, d = P.data;
+      var list = h('div', { class: 'camp-list' }, G.CAMPAIGN.map(function (lv, i) {
+        var un = P.campUnlocked(i), st = d.campaign[lv.id] || 0;
+        return h('div', { class: 'camp-item' + (un ? '' : ' locked') + (st ? ' done' : ''), onclick: function () {
+          if (!un) { self.toast('先通关上一关'); return; }
+          A.play('click'); self.campDetail(i);
+        } },
+          h('div', { class: 'camp-no' }, '第' + G.cnNum(i + 1) + '回'),
+          h('div', { class: 'camp-main' }, h('div', { class: 'camp-name' }, lv.name), h('div', { class: 'camp-sub' }, G.MAPS[lv.map].name + ' · 守 ' + lv.waves + ' 波' + (lv.rules.deck ? ' · ' + lv.rules.deck.map(function (g) { return G.GEN[g].name; }).join('') : ''))),
+          h('div', { class: 'stars small', html: un ? starsHtml(st, 3) : '<span class="lock-ic">锁</span>' }));
+      }));
+      var el = this.page('长坂坡', h('div', null,
+        h('div', { class: 'page-tip' }, '按三国故事一回一回打下去，每回都有特别的规矩。不丢心三星，最多丢一颗心两星。已得 ' + P.campStars() + ' / ' + G.CAMPAIGN.length * 3 + ' 星。'),
+        list));
+      this.setScreen(el, 'camp');
+    },
+
+    campDetail: function (i) {
+      var self = this, lv = G.CAMPAIGN[i], r = lv.rules;
+      var rulesTxt = [];
+      if (r.deck) rulesTxt.push('出战武将：' + r.deck.map(function (g) { return G.GEN[g].name; }).join('、') + '（用你给他们装的兵器）');
+      else rulesTxt.push('出战武将：你自己的出战阵容');
+      if (r.soldiers) rulesTxt.push('只招：' + r.soldiers.map(function (k) { return G.SOLDIERS[k].ch; }).join('、'));
+      if (r.hearts) rulesTxt.push('阿斗只有 ' + r.hearts + ' 颗心');
+      if (r.weather) rulesTxt.push('天气：' + G.WEATHER[r.weather].name);
+      if (r.bosses) rulesTxt.push('Boss：' + Object.keys(r.bosses).map(function (w) { return '第' + w + '波 ' + G.BOSSES[r.bosses[w]].name; }).join('，'));
+      var rw = lv.reward, rwTxt = ['铜钱 ' + rw.gold];
+      if (rw.frags) rwTxt.push('兵器碎片 ×' + rw.frags);
+      if (rw.card) rwTxt.push('锦囊「' + G.CARD[rw.card].name + '」');
+      if (rw.souls) Object.keys(rw.souls).forEach(function (g) { rwTxt.push(G.GEN[g].name + '将魂 ×' + rw.souls[g]); });
+      var body = h('div', { class: 'camp-detail' },
+        h('p', { class: 'cd-story' }, lv.story),
+        h('ul', { class: 'cd-rules' }, rulesTxt.map(function (t) { return h('li', null, t); })),
+        h('p', { class: 'cd-tip' }, '提示：' + lv.tip),
+        h('p', { class: 'cd-reward' }, '首次通关：' + rwTxt.join('、')));
+      this.modal('第' + G.cnNum(i + 1) + '回 · ' + lv.name, body, [{ text: '出征', cls: 'red', fn: function () { self.startCampaign(lv); } }]);
+    },
+
+    // ───────────────── 每日挑战 ─────────────────
+    showDaily: function (board) {
+      var self = this, d = P.data, cfg = G.dailyConfig(G.cnDay());
+      board = board || 'today';
+      var w = G.WEATHER[cfg.weather];
+      var mine = d.daily.day === cfg.day ? d.daily.best : 0;
+      var lb = h('div', { class: 'lb' }, h('div', { class: 'lb-loading' }, '正在读取排行榜…'));
+      var head = h('div', { class: 'daily-head' },
+        h('div', { class: 'dh-date' }, cfg.day.slice(5).replace('-', '月') + '日 · ' + G.MAPS[cfg.map].name),
+        h('div', { class: 'dh-row' }, '天气：' + w.name + ' — ' + w.desc),
+        h('div', { class: 'dh-gens' }, cfg.deck.map(function (gid) {
+          var wp = G.WEAPON[cfg.weapons[gid].id];
+          return h('span', { class: 'mini-gen big' }, G.GEN[gid].name, h('small', { style: 'color:' + G.RARITY_COLOR[wp.rarity] }, wp.name));
+        })),
+        h('div', { class: 'dh-row' }, '锦囊：' + cfg.cards.map(function (c) { return G.CARD[c].name; }).join('、')),
+        h('div', { class: 'dh-row' }, '今日最佳：' + (mine ? G.fmt(mine) + ' 分' : '还没挑战') + (d.daily.rewarded === cfg.day ? '' : ' · 首次挑战送 150 铜钱和 2 块碎片')),
+        h('button', { class: 'btn big red', onclick: function () { A.play('click'); self.startDaily(); } }, '开始挑战'));
+      var tabs = h('div', { class: 'tabs' },
+        h('button', { class: 'tab' + (board === 'today' ? ' on' : ''), onclick: function () { self.showDaily('today'); } }, '今日榜'),
+        h('button', { class: 'tab' + (board === 'all' ? ' on' : ''), onclick: function () { self.showDaily('all'); } }, '总榜'));
+      var el = this.page('每日挑战', h('div', null,
+        h('div', { class: 'page-tip' }, '每天北京时间 0 点换题：所有人同一张图、同一套武将兵器、同一种天气。守的波数越多、杀敌越多分越高。'),
+        head, tabs, lb));
+      this.setScreen(el, 'daily');
+      G.Board.list(board, d.pid).then(function (r) {
+        if (self.screen !== 'daily') return;
+        lb.innerHTML = '';
+        if (!r) { lb.appendChild(h('div', { class: 'lb-loading' }, '排行榜还没开通。部署到 Cloudflare 并绑定 KV 后就有全球排行（见 README）。')); return; }
+        if (!r.list.length) { lb.appendChild(h('div', { class: 'lb-loading' }, '还没有人上榜，快来当第一个！')); return; }
+        r.list.forEach(function (e) {
+          lb.appendChild(h('div', { class: 'lb-row' + (e.me ? ' me' : '') },
+            h('span', { class: 'lb-rank' + (e.rank <= 3 ? ' top' : '') }, String(e.rank)),
+            h('span', { class: 'lb-name' }, e.name), h('span', { class: 'lb-wave' }, '第' + e.wave + '波'), h('span', { class: 'lb-score' }, G.fmt(e.score))));
+        });
+        if (r.mine && r.mine.rank > 50) lb.appendChild(h('div', { class: 'lb-row me' }, h('span', { class: 'lb-rank' }, String(r.mine.rank)), h('span', { class: 'lb-name' }, '我'), h('span', { class: 'lb-wave' }, ''), h('span', { class: 'lb-score' }, G.fmt(r.mine.score))));
+      });
     },
 
     // ───────────────── 武将 ─────────────────
@@ -519,8 +753,12 @@
       var body = h('div', { class: 'pause-body' },
         h('div', { class: 'vol-row' }, h('span', null, '名号'), nameIn),
         volRow('音乐', 'music'), volRow('音效', 'sfx'),
-        h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: s.dmg ? 'checked' : null, onchange: function (e) { s.dmg = e.target.checked; P.save(); } }), ' 显示伤害数字'),
-        h('div', { class: 'muted small' }, '电脑上：空格 征兵 · 1~5 选营里的兵 · F 倍速 · Esc 暂停'),
+        h('label', { class: 'chk' }, h('input', { type: 'checkbox', id: 'opt-dmg', checked: s.dmg ? 'checked' : null, onchange: function (e) { s.dmg = e.target.checked; P.save(); } }), ' 显示伤害数字'),
+        h('label', { class: 'chk' }, h('input', { type: 'checkbox', id: 'opt-vib', checked: s.vibrate !== false ? 'checked' : null, onchange: function (e) { s.vibrate = e.target.checked; G.hapticOn = s.vibrate; P.save(); G.haptic(20); } }), ' 震动反馈（部分安卓手机）'),
+        h('div', { class: 'save-row' },
+          h('button', { class: 'btn small ghost', onclick: function () { A.play('click'); self.showExport(); } }, '导出存档码'),
+          h('button', { class: 'btn small ghost', onclick: function () { A.play('click'); self.showImport(); } }, '导入存档码')),
+        h('div', { class: 'muted small' }, '电脑上：空格 征兵 · 1~5 选营里的兵 · Q/E 锦囊 · F 倍速 · Esc 暂停'),
         h('div', { class: 'muted small' }, '版本 ' + G.VERSION + ' · 字体：马善政毛笔楷书（SIL OFL）'),
         h('button', { class: 'btn ghost small danger', onclick: function () {
           self.confirm('清空所有进度（段位、兵器、铜钱）？此操作无法撤销。', function () { P.reset(); self.showHome(); });
@@ -532,6 +770,36 @@
       this.modal('设置', body, [{ text: '好', cls: 'red' }]);
     },
 
+    showExport: function () {
+      var self = this, code = P.exportCode();
+      var ta = h('textarea', { class: 'save-code', id: 'save-export', readonly: 'readonly', rows: 6 });
+      ta.value = code;
+      this.modal('导出存档', h('div', null, h('p', { class: 'help-text' }, '把这串存档码保存好（比如发给自己）。换手机、清了浏览器缓存后，用「导入存档码」就能恢复进度。'), ta), [
+        { text: '复制', cls: 'red', fn: function () {
+          var ok = function () { self.toast('已复制存档码'); };
+          var fallback = function () { ta.focus(); ta.select(); try { document.execCommand('copy'); ok(); } catch (e) { self.toast('请长按文本框手动复制'); } };
+          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(ok, fallback); else fallback();
+          return true;
+        } },
+        { text: '关闭', cls: 'ghost' }
+      ]);
+    },
+    showImport: function () {
+      var self = this;
+      var ta = h('textarea', { class: 'save-code', id: 'save-import', rows: 6, placeholder: '把 ZYAD1: 开头的存档码粘贴到这里' });
+      var err = h('div', { class: 'save-err' });
+      this.modal('导入存档', h('div', null, h('p', { class: 'help-text' }, '导入会覆盖本机现在的进度。'), ta, err), [
+        { text: '导入', cls: 'red', fn: function () {
+          var e = P.importCode(ta.value);
+          if (e) { err.textContent = e; A.play('error'); return true; }
+          A.setVolumes(P.data.settings.music, P.data.settings.sfx);
+          self.toast('存档已恢复');
+          self.showHome();
+        } },
+        { text: '取消', cls: 'ghost' }
+      ]);
+    },
+
     showHelp: function (onClose) {
       var html = [
         '<h4>怎么赢</h4>双方各守一个阿斗（头顶三颗心）。贼兵沿红色箭头出发，走到阿斗跟前就会让他掉一颗心，Boss 掉两颗。<b>先把对手的心打光</b>的一方获胜。',
@@ -541,7 +809,11 @@
         '<h4>馒头</h4>打死贼兵、每波开始都会得馒头。<b>农</b>夫不会打仗，但会定时蒸馒头。把用不上的兵拖回“营”能换回一些馒头。',
         '<h4>道具</h4>营里偶尔会刷出红色的道具：<b>铲</b>可以把我方草地挖成营地，<b>令</b>直接升一级，<b>砚</b>把兵变成别的兵，<b>雷</b>埋在路上，<b>鼓</b>全军加速，<b>丹</b>给阿斗回一颗心。',
         '<h4>贼兵</h4><b>寇</b>跑得快，<b>匪</b>血厚，<b>甲</b>穿重甲（枪可以无视），<b>巫</b>会给同伙回血，<b>盗</b>身上揣着馒头。每 5 波来一个 Boss。',
-        '<h4>养成</h4>赢了升段位、拿铜钱和兵器碎片。在<b>兵器</b>里合成兵器，在<b>武将</b>里给武将装上，并挑最多 4 名武将出战。'
+        '<h4>字阵羁绊</h4>相邻的两个字连成词有加成：<b>刀枪</b>伤害、<b>弓骑</b>攻速、<b>枪骑</b>冲锋更快、<b>农</b>挨着兵会<b>屯田</b>多产馒头。三个同种兵连成一线是<b>长蛇阵</b>，刀枪弓骑围成田字是<b>四象阵</b>。武将也有羁绊：刘关张同场<b>桃园结义</b>、五虎到三位<b>五虎上将</b>……场上会画出连线。点顶部的波次可以查看我方羁绊和下一波敌情。',
+        '<h4>锦囊</h4>每局带两个锦囊（空城计、火攻、草船借箭……），右下角点一下看说明、再点一下发动，每个只能用一次。对手也会用，小心「借刀杀人」把贼兵丢到你这边。',
+        '<h4>天气与事件</h4>每局天气不同：大雾射程变短、东风火势更旺、暴雨贼兵变慢、夜袭贼多馒头也多。每隔几波还会有随机事件，比如天降粮草、流民投军、疫病流行。',
+        '<h4>养成</h4>赢了升段位、拿铜钱和兵器碎片。在<b>兵器</b>里合成兵器，在<b>武将</b>里给武将装上，并挑最多 4 名武将出战。',
+        '<h4>更多玩法</h4><b>战役</b>：按长坂坡的故事一回一回打，每回规矩不同，通关送锦囊。<b>每日挑战</b>：每天所有人打同一局，比分数上全球排行。<b>无尽守城</b>：一个人能守多少波。'
       ].join('');
       this.modal('玩法说明', h('div', { class: 'help-text', html: html }), [{ text: '明白了', cls: 'red' }], { onClose: onClose, cls: 'tall' });
     }

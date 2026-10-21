@@ -1,7 +1,7 @@
 // 离线缓存：先用缓存，同时后台更新
-var CACHE = 'zyad-v1.0.0';
+var CACHE = 'zyad-v1.1.0';
 var FILES = ['./', 'index.html', 'css/style.css', 'fonts/brush.woff2', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png',
-  'js/util.js', 'js/data.js', 'js/battle.js', 'js/ai.js', 'js/audio.js', 'js/save.js', 'js/view.js', 'js/ui.js', 'js/main.js'];
+  'js/util.js', 'js/data.js', 'js/battle.js', 'js/ai.js', 'js/audio.js', 'js/save.js', 'js/net.js', 'js/view.js', 'js/ui.js', 'js/main.js'];
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); }));
 });
